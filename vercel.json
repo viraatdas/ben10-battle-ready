@@ -3,11 +3,45 @@
   "outputDirectory": ".",
   "headers": [
     {
-      "source": "/game/(.*\\.(dcr|dxr|dir|cct|cxt|cst|swf))",
+      "source": "/game/:file.dcr",
       "headers": [
         { "key": "Content-Type", "value": "application/x-director" },
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
-        { "key": "Access-Control-Allow-Origin", "value": "*" }
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/game/:file.dxr",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-director" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/game/:file.dir",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-director" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/game/:file.cct",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-director" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/game/:file.cst",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-director" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/game/:file.swf",
+      "headers": [
+        { "key": "Content-Type", "value": "application/x-shockwave-flash" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
     },
     {
@@ -17,7 +51,7 @@
       ]
     },
     {
-      "source": "/ruffle/(.*\\.wasm)",
+      "source": "/ruffle/:file.wasm",
       "headers": [
         { "key": "Content-Type", "value": "application/wasm" },
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
