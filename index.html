@@ -4,22 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ben 10: Battle Ready</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='15' fill='%2300d100'/><circle cx='16' cy='16' r='8' fill='white'/><text x='16' y='21' text-anchor='middle' font-size='14' font-weight='bold' fill='%2300d100'>10</text></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='31' fill='%23000'/><circle cx='32' cy='32' r='27' fill='%23e6e6e6'/><circle cx='32' cy='32' r='23' fill='%23000'/><circle cx='32' cy='32' r='20' fill='%2317c217'/><path d='M16 12 L48 12 L32 32 L48 52 L16 52 L32 32 Z' fill='%23000'/></svg>">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div id="game-container">
-        <embed
-            id="game"
-            src="game/game.dcr"
-            type="application/x-director"
-            width="780"
-            height="480"
-            bgcolor="#000000"
-            swStretchStyle="none"
-            data-sw-_runMode="Plugin"
-            data-sw-_moviePath="game/"
-        >
+        <noscript>
+            <embed
+                id="game"
+                src="game/game.dcr"
+                type="application/x-director"
+                width="780"
+                height="480"
+                bgcolor="#000000"
+                swStretchStyle="none"
+                data-sw-_runMode="Plugin"
+                data-sw-_moviePath="game/"
+            >
+        </noscript>
     </div>
 
     <script src="dirplayer-polyfill.js"></script>
