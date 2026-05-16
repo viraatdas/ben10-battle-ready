@@ -1,151 +1,101 @@
 # Ben 10: Battle Ready - HTML5 Edition
 
-A faithful HTML5 recreation of the classic **Ben 10: Battle Ready** game, originally built as a Macromedia Director (Shockwave) game for Cartoon Network's website (circa 2005-2006).
+The original 2005 **Ben 10: Battle Ready** (Cartoon Network, Macromedia Director MX 2004) running in modern browsers via [DirPlayer](https://github.com/igorlira/dirplayer-rs) — a WebAssembly Shockwave Director emulator.
 
 **[Play it live](https://ben10-battle-ready.viraat.dev)**
 
-## How the Conversion Was Done
+## What changed in this rewrite
 
-### The Problem
+The previous version of this repo was a **from-scratch JavaScript recreation** — programmatically drawn pixel-art sprites, synthesized audio, and approximated game mechanics. It looked Ben-10-ish but wasn't actually the game.
 
-The original Ben 10: Battle Ready was built with **Macromedia Director MX 2004** (Shockwave), a technology that has been completely discontinued. The Shockwave plugin was EOL'd in April 2019 and removed from all modern browsers. The original game exists only as a Windows projector executable (`.exe`) with Director cast files (`.cct`, `.dcr`) — completely unplayable on modern systems.
+This version is the **actual original game**. Every sprite, animation frame, sound effect, level layout, and Lingo bytecode handler is the one Cartoon Network shipped in 2005. The browser is running the original `game.dcr` and 24 `.cct` cast libraries — the same bits that ran in the Shockwave projector — through a WASM emulator. The previous `js/` reconstruction has been deleted.
 
-### Step 1: Safety Analysis of the Original Files
+## How it works
 
-The source was an untrusted zip file downloaded from the internet. Before doing anything, we performed a thorough safety analysis:
+1. The original game files (`game.dcr`, 24 external `.cct` cast libraries, `gamewrapper.dir`) live in `game/` exactly as they shipped.
+2. `dirplayer-polyfill.js` — DirPlayer v0.5.1 compiled to WASM — auto-detects the `<embed type="application/x-director">` element in `index.html` and replaces it with a real Shockwave player.
+3. The WASM VM interprets the original Director chunks and Lingo bytecode, fetches each cast library on demand, and renders to a `<canvas>` element.
 
-- **File type verification**: Confirmed the zip contains a legitimate Director MX 2004 projector
-- **Binary analysis**: All 70+ DLLs/x32 files are PE32 (32-bit Windows) executables — cannot run on macOS/Linux
-- **Hash fingerprinting**: SHA-256 hash recorded for provenance tracking
-- **Suspicious file flagging**: Identified `LeechProtectionRemovalHelp.x32` as a known Shockwave preservation community tool (not malware)
-- **No execution risk**: Game data files (`.cct`, `.dcr`) are media containers, not executable code
-- **INI inspection**: `Projector.ini` is the default Director template (all settings commented out); `lingo.ini` is effectively empty
+No reimplementation. Every pixel, animation, sound, and behavior is the original.
 
-**Verdict: Safe.** Standard Director MX 2004 package from the Shockwave preservation community.
+## The one binary patch
 
-### Step 2: Reverse Engineering the Game Architecture
+The original `game.dcr` stores all 24 external cast filenames as the placeholder `C:\PROJECTS\Ben 10\_DEV\0.033\empty.cst`. The original Windows Shockwave projector relied on a startup Lingo handler to rewrite those paths at runtime — a flow DirPlayer's emulator doesn't currently re-trigger, so every cast would attempt to load from `empty.cct` and find nothing.
 
-Since Director files use a proprietary binary format, we used multiple approaches to extract the game's structure:
+`tools/patch_dcr.py` fixes this with a single, minimal binary patch:
 
-#### 2a. RIFX Container Parsing
+1. Parses the Director **afterburner** container format (`XFIR`/`MDGF` with zlib-compressed `Fcdr`/`ABMP`/`ILS` blocks).
+2. Decompresses the `ILS` (initial load segment), locates the `MCsL` (Movie Cast List) chunk inside it.
+3. Replaces each of the 24 `empty.cst` occurrences with a unique 9-character filename (`emp01.cst` through `emp24.cst`). Same byte length so the chunk's internal offset table stays valid.
+4. Re-compresses ILS, updates the `ABMP` chunk index (offsets for trailing chunks shift by the new ILS-compression delta), re-compresses ABMP, fixes the RIFX header size, and rewrites the file.
+5. The cast files are copied to matching `emp01.cct` through `emp24.cct` so DirPlayer's `.cst`→`.cct` lookup resolves.
 
-Director files use the **RIFX** format (a variant of RIFF, in big-endian). We wrote a custom Python parser to:
-- Identify the file format: `XFIR` (little-endian RIFX) with `CDGF` (compressed Director cast) and `MDGF` (compressed Director movie) subtypes
-- Locate and decompress **zlib-compressed data streams** within the binary files
-- Extract the internal chunk structure (KEY*, CAS*, BITD, Lscr, etc.)
+The Lingo bytecode and every cast member are untouched. The patch is idempotent and reproducible — re-run `python3 tools/patch_dcr.py` to regenerate `game/game.dcr` from a clean original.
 
-#### 2b. Asset and Class Name Extraction
+### Patched-name mapping
 
-From the decompressed data streams, we extracted the complete game architecture:
+| Patched index | Cast library | Cast members |
+|---|---|---|
+| `emp01.cct` | char_Ben | 29 |
+| `emp02.cct` | char_FourArms | 24 |
+| `emp03.cct` | char_Graymatter | 21 |
+| `emp04.cct` | char_Diamondhead | 32 |
+| `emp05.cct` | char_Ghostfreak | 33 |
+| `emp06.cct` | char_Heatblast | 26 |
+| `emp07.cct` | char_Ripjaw | 37 |
+| `emp08.cct` | char_Stinkfly | 21 |
+| `emp09.cct` | char_Upgrade | 22 |
+| `emp10.cct` | char_XLR8 | 12 |
+| `emp11.cct` | char_Wildmutt | 21 |
+| `emp12.cct` | char_Bugbot | 8 |
+| `emp13.cct` | char_Nosebot | 9 |
+| `emp14.cct` | char_LargeBugbot | 8 |
+| `emp15.cct` | char_Minion1 | 12 |
+| `emp16.cct` | char_Minion2 | 12 |
+| `emp17.cct` | char_Mechbot | 7 |
+| `emp18.cct` | char_FlyingMechbot | 5 |
+| `emp19.cct` | char_Boss | 33 |
+| `emp20.cct` | game | 225 |
+| `emp21.cct` | map_Factory | 202 |
+| `emp22.cct` | map_Micro | 197 |
+| `emp23.cct` | map_Rafters | 146 |
+| `emp24.cct` | map_Sewer | 193 |
 
-**Game Classes Found:**
-| Category | Classes |
-|----------|---------|
-| Player Characters | `class_Char_Ben`, `class_Char_FourArms`, `class_Char_Heatblast`, `class_Char_Diamondhead`, `class_Char_XLR8`, `class_Char_Wildmutt`, `class_Char_Ghostfreak`, `class_Char_Upgrade`, `class_Char_Stinkfly`, `class_Char_Ripjaw`, `class_Char_GraymatterZoom` |
-| Enemies | `class_Char_Minion1`, `class_Char_Minion2`, `class_Char_Mechbot`, `class_Char_FlyingMechbot`, `class_Char_NoseBot`, `class_Char_Bugbot`, `class_Char_LargeBugbot` (Boss) |
-| Actions (per character) | `_Ready`, `_Run`, `_Attack`, `_Hit`, `_Dead`, `_Transform` |
-| Breakable Objects | `RustyMetalCrate`, `BrownBarrel`, `GreenBarrel`, `BlueBarrel`, `ExplosiveBarrel`, `StoneBlock`, `CardboardBox`, `CoffeeMug`, `ColaCan`, `SumoBox`, `FactoryMachine1/2`, `FactoryDesk1/2`, `FactoryCabinet1/2`, `FactorySumoDisplay1/2` |
-| Pickups | `class_PickupItem_1up`, `class_PickupItem_SumoCard`, `class_PickupItem_Energy` |
-| Game Systems | `class_Main`, `class_Screen`, `class_View`, `class_SpriteManager`, `class_AIController`, `class_Pathfinder`, `class_AudioManager`, `class_SaveManager`, `class_HUDOverlay`, `class_HUDOmnitrix` |
+**1,342 original cast members across 24 libraries**, all loading successfully at runtime — verified via the WASM VM's load logs.
 
-**Level Maps:** `map_Factory.cct`, `map_Sewer.cct`, `map_Rafters.cct`, `map_Micro.cct`
-
-**12 Level Layouts:** `_level_layout_01` through `_level_layout_12` (discovered via path `C:\PROJECTS\Ben 10\_DEV\0.033`)
-
-#### 2c. Lingo Script Analysis
-
-The wrapper script (`gamewrapper.dir`) was successfully decompiled, revealing the game initialization flow:
-```lingo
-on exitFrame me
-  disableGoToNetPage()
-  bugfixShockwave3DBadDriverList()
-  forceTheExitLock(0)
-  setTheRunMode("Plugin")
-  go(1, "game.dcr")
-  -- renderer selection logic (DirectX9 > DirectX5 > OpenGL > Software)
-end
-```
-
-The main game logic in `game.dcr`/`game.cct` uses **compiled Lingo bytecode** (not source), which cannot be trivially decompiled. The bytecode was analyzed for string constants and data structures.
-
-#### 2d. Tools Used
-
-| Tool | Purpose |
-|------|---------|
-| `file`, `xxd` | Binary format identification |
-| `unzip -l` | Safe archive inspection without extraction |
-| `shasum` | File integrity verification |
-| Custom Python RIFX parser | Director file structure analysis |
-| `zlib.decompress()` | Decompressing Director's compressed chunks |
-| `drxtract` | Partial Director file extraction (MV93 format) |
-
-### Step 3: HTML5 Reconstruction
-
-Since the original assets (sprites, sounds) are embedded in Director's proprietary compressed format and the game logic is compiled bytecode, we **rebuilt the game from scratch** in HTML5:
-
-- **Rendering**: HTML5 Canvas 2D API with programmatic pixel-art sprites
-- **Audio**: Web Audio API with synthesized retro sound effects
-- **Architecture**: Vanilla JavaScript with class-based entity system mirroring the original's `class_Actor` > `class_Character` > `class_PlayerCharacter` hierarchy
-- **Game mechanics**: Side-scrolling beat-em-up with Omnitrix transformation system, matching the original's character state machine (Ready/Run/Attack/Hit/Dead/Transform)
-- **Levels**: 12 procedurally generated levels across 4 themes (Factory, Sewer, Rafters, Micro) matching the original's map files
-- **All 10 aliens**: Four Arms, Heatblast, Diamondhead, XLR8, Wildmutt, Ghostfreak, Upgrade, Stinkfly, Ripjaw, Gray Matter
-- **All enemy types**: Minions, Mechbots, Flying Mechbots, Bugbots, Large Bugbots, Nosebots, plus Boss fights
-
-### File Structure
+## File layout
 
 ```
 ben10-battle-ready/
-  index.html          -- Entry point
-  vercel.json         -- Deployment config
-  css/
-    style.css         -- Styling and loading screen
-  js/
-    utils.js          -- Constants and helpers
-    sprites.js        -- Pixel-art sprite definitions
-    input.js          -- Keyboard input handling
-    audio.js          -- Web Audio sound effects
-    particles.js      -- Visual effects system
-    entities.js       -- Base entity/combat classes
-    player.js         -- Player + alien transformations
-    enemies.js        -- Enemy types and AI
-    objects.js         -- Breakable objects and pickups
-    levels.js         -- Level generation and backgrounds
-    hud.js            -- HUD and Omnitrix interface
-    screens.js        -- Title, game over, win screens
-    game.js           -- Main game loop and state management
+  index.html                  -- <embed src="game/game.dcr" type="application/x-director">
+  dirplayer-polyfill.js       -- DirPlayer v0.5.1 WASM polyfill (12 MB)
+  ruffle/                     -- Ruffle (Flash player, for any embedded Flash sprites Director may reference)
+  css/style.css               -- Page chrome (~30 lines)
+  vercel.json                 -- MIME types and cache headers for .dcr/.cct/.wasm
+  game/                       -- Original Director files
+    game.dcr                  -- Patched main movie (MCsL only)
+    gamewrapper.dir           -- Original wrapper movie (unused at runtime, kept for reference)
+    char_*.cct, map_*.cct     -- Original external cast libraries
+    emp01.cct … emp24.cct     -- Same data, renamed for the patched MCsL
+    empty.cct                 -- Original placeholder cast (kept for reference)
+    tracker.swf               -- Original analytics SWF stub
+    lingo.ini                 -- Original Lingo config (effectively empty)
+  tools/
+    patch_dcr.py              -- The .dcr patcher
 ```
 
-## How to Play
-
-| Control | Action |
-|---------|--------|
-| Arrow Keys / WASD | Move |
-| Space / W / Up | Jump |
-| Z / J / Enter | Attack |
-| X / K | Transform / Untransform |
-| Q / E | Select Alien (when human) |
-| P / Escape | Pause |
-| M | Toggle Sound |
-
-## Running Locally
-
-Just open `index.html` in any modern browser, or serve with any static file server:
+## Running locally
 
 ```bash
-npx serve .
-# or
 python3 -m http.server 8000
 ```
 
-## Tech Stack
-
-- **Zero dependencies** - Pure vanilla HTML5/CSS/JavaScript
-- **Canvas 2D** rendering with programmatic sprites
-- **Web Audio API** for synthesized sound effects
-- **No build step** - Works directly in the browser
+Then open <http://localhost:8000>. Any modern browser; no plugin install needed.
 
 ## Credits
 
-- Original game by **Cartoon Network** / **Powerhouse Animation Studios** (circa 2005-2006)
-- Built with **Macromedia Director MX 2004** (Shockwave)
-- HTML5 conversion and reverse engineering performed with Claude Code
+- Original game: **Cartoon Network** / **Powerhouse Animation Studios** (circa 2005).
+- Original platform: **Macromedia Director MX 2004** (Shockwave) — EOL'd in 2019.
+- Game files preserved by **[Flashpoint Archive](https://flashpointarchive.org/)** (entry `dbb21635-b0d5-78d9-a749-c4778a07e698`).
+- WASM Shockwave emulator: **[dirplayer-rs](https://github.com/igorlira/dirplayer-rs)** by Igor Lira (MIT / Apache 2.0).
+- Embedded Flash playback: **[Ruffle](https://ruffle.rs/)** (MIT / Apache 2.0).

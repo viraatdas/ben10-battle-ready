@@ -9,35 +9,19 @@
 </head>
 <body>
     <div id="game-container">
-        <canvas id="gameCanvas" width="780" height="480"></canvas>
-        <div id="loading-screen">
-            <div class="loading-logo">
-                <div class="omnitrix-loading">
-                    <div class="omnitrix-ring"></div>
-                    <div class="omnitrix-core">10</div>
-                </div>
-            </div>
-            <h1>BEN 10</h1>
-            <h2>BATTLE READY</h2>
-            <div class="loading-bar-container">
-                <div class="loading-bar" id="loading-bar"></div>
-            </div>
-            <p id="loading-text">Loading...</p>
-        </div>
+        <embed
+            id="game"
+            src="game/game.dcr"
+            type="application/x-director"
+            width="780"
+            height="480"
+            bgcolor="#000000"
+            swStretchStyle="none"
+            data-sw-_runMode="Plugin"
+            data-sw-_moviePath="game/"
+        >
     </div>
 
-    <script src="js/utils.js"></script>
-    <script src="js/sprites.js"></script>
-    <script src="js/input.js"></script>
-    <script src="js/audio.js"></script>
-    <script src="js/particles.js"></script>
-    <script src="js/entities.js"></script>
-    <script src="js/player.js"></script>
-    <script src="js/enemies.js"></script>
-    <script src="js/objects.js"></script>
-    <script src="js/levels.js"></script>
-    <script src="js/hud.js"></script>
-    <script src="js/screens.js"></script>
-    <script src="js/game.js"></script>
+    <script src="dirplayer-polyfill.js"></script>
 </body>
 </html>
