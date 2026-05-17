@@ -84,6 +84,19 @@ ben10-battle-ready/
     patch_dcr.py              -- The .dcr patcher
 ```
 
+## Controls
+
+Confirmed from the game's own `class_KeyController` bytecode:
+
+| Key | Action |
+|---|---|
+| Arrow keys | Move |
+| Space | Attack |
+| Z | Transform / Untransform |
+| Esc | Pause |
+
+Alien selection happens through the Omnitrix dial inside the game canvas, not via keyboard.
+
 ## Running locally
 
 ```bash
