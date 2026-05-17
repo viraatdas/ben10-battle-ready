@@ -86,16 +86,30 @@ ben10-battle-ready/
 
 ## Controls
 
-Confirmed from the game's own `class_KeyController` bytecode:
+Reverse-engineered from the game's own bytecode (`class_Game.keyMgr_keyDown` is the authoritative key dispatcher; `class_KeyController` declares a `KEYCODE_TRANSFORM = KEYCODE_Z` field but nothing in the game ever reads it — it's dead code from a refactor):
 
 | Key | Action |
 |---|---|
-| Arrow keys | Move |
-| Space | Attack |
-| Z | Transform / Untransform |
-| Esc | Pause |
+| Arrow keys | Move Ben / navigate menus |
+| Space | Attack / confirm menu button |
+| **X** (hold) | Open Omnitrix dial — works **only on level 1 and 12** (`if (g.levelID = 1) or (g.levelID = 12)`). The dial auto-rotates while held; release to commit the highlighted alien. Press X again while transformed to revert to Ben. |
+| Esc | Cancel / close popup |
 
-Alien selection happens through the Omnitrix dial inside the game canvas, not via keyboard.
+Levels 2–11 are mission levels and lock you to one specific alien (`LEVEL_DEFAULT_CHARS[N]`), so X does nothing there.
+
+## How to play a mission
+
+Level 1 is the **hub**, not a level. From level 1:
+
+1. Walk Ben (arrow keys) onto one of the **mission holes** scattered on the map. Each hole corresponds to one alien.
+2. A mission popup opens.
+3. Use LEFT / RIGHT arrows to highlight **ACCEPT** (right) or **CANCEL** (left).
+4. Press **Space** to confirm.
+5. The chosen mission level loads.
+
+After completing a mission, the game returns you to level 1, marks that mission as done, and unlocks the alien permanently in your Omnitrix. Beat all 10 missions to open the boss door (level 12).
+
+Alternative path: hold X on level 1 to manually rotate the Omnitrix dial and pick an alien that way — same outcome.
 
 ## Running locally
 
