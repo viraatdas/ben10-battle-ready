@@ -31,5 +31,17 @@
     </div>
 
     <script src="dirplayer-polyfill.js"></script>
+    <script>
+        // Window-level ESC fallback: the polyfill's React onKeyDown only fires
+        // when the game container has focus, which is easy to lose (clicking
+        // outside the canvas, opening DevTools, etc).
+        window.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape" && e.keyCode !== 27) return;
+            var fn = window.force_exit_mission;
+            if (typeof fn !== "function") return;
+            e.preventDefault();
+            try { fn(); } catch (_) {}
+        }, true);
+    </script>
 </body>
 </html>
