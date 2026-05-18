@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ben 10: Battle Ready</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='31' fill='%23000'/><circle cx='32' cy='32' r='27' fill='%23e6e6e6'/><circle cx='32' cy='32' r='23' fill='%23000'/><circle cx='32' cy='32' r='20' fill='%2317c217'/><path d='M16 12 L48 12 L32 32 L48 52 L16 52 L32 32 Z' fill='%23000'/></svg>">
+    <!-- Preload the polyfill and the largest cast file so the browser
+         starts downloading them in parallel with the HTML parse instead
+         of waiting until the <script> tag is hit. ~12MB polyfill =
+         biggest item on the critical path. -->
+    <link rel="preload" as="script" href="dirplayer-polyfill.js">
+    <link rel="preload" as="fetch" href="game/game.dcr" crossorigin>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
