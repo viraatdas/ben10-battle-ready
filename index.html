@@ -42,6 +42,66 @@
             e.preventDefault();
             try { fn(); } catch (_) {}
         }, true);
+
+        // Strip the soft circular "spotlight" sprites that the original game
+        // draws around Ben and around the green XP orbs. Implemented as a
+        // periodic Lingo eval through the polyfill's WASM bindings since the
+        // sprite is rendered by the in-game scene, not by anything in JS.
+        (function () {
+            var KEYWORDS = ["light", "spot", "halo", "shadow", "vignette",
+                            "glow", "fog", "dark", "mask", "circle", "lite",
+                            "lamp", "torch", "lume", "ambient", "lit"];
+            var MAX_CHANNEL = 240;
+            var lastBlock = null;
+
+            function evalLingo(code) {
+                var vm = window.__vm;
+                if (!vm || !vm.eval_command || !vm.__wbindgen_malloc ||
+                    !vm.memory) return false;
+                try {
+                    var enc = new TextEncoder().encode(code);
+                    var ptr = vm.__wbindgen_malloc(enc.length, 1);
+                    new Uint8Array(vm.memory.buffer, ptr, enc.length).set(enc);
+                    vm.eval_command(ptr, enc.length);
+                    return true;
+                } catch (_) { return false; }
+            }
+
+            function spriteCheck(i) {
+                if (lastBlock === null) {
+                    var parts = [];
+                    for (var k = 0; k < KEYWORDS.length; k++) {
+                        parts.push('NM contains "' + KEYWORDS[k] + '"');
+                    }
+                    lastBlock = parts.join(" or ");
+                }
+                return (
+                    "if voidP(sprite(" + i + ").member) = 0 then " +
+                    "if voidP(sprite(" + i + ").member.name) = 0 then " +
+                    "if (" + lastBlock.replace(/NM/g,
+                        "sprite(" + i + ").member.name") + ") then " +
+                    "sprite(" + i + ").visible = 0"
+                );
+            }
+
+            function strip() {
+                if (!window.__vm || !window.__vm.eval_command) return;
+                for (var i = 1; i <= MAX_CHANNEL; i++) evalLingo(spriteCheck(i));
+            }
+
+            // Expose for debugging: window.__strip_spotlight() in DevTools.
+            window.__strip_spotlight = strip;
+
+            function start() {
+                if (!window.__vm || !window.__vm.eval_command) {
+                    setTimeout(start, 200);
+                    return;
+                }
+                strip();
+                setInterval(strip, 500);
+            }
+            start();
+        })();
     </script>
 </body>
 </html>
