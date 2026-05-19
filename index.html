@@ -47,12 +47,23 @@
         // draws around Ben and around the green XP orbs. Implemented as a
         // periodic Lingo eval through the polyfill's WASM bindings since the
         // sprite is rendered by the in-game scene, not by anything in JS.
+        //
+        // EXCLUDE list is load-bearing: if the player's visSprite channel
+        // ever held a spotlight-matching member it picked up visible=0, and
+        // visible=0 sticks across member swaps. So the morph swap to
+        // ben_R_transform_1 (Ben crouched) paints to an invisible channel
+        // and the user only sees the green flashes. The unhide-pass forces
+        // visible=1 whenever the current member name matches the exclude
+        // list, undoing any stale hide before the strip pass runs.
         (function () {
             var KEYWORDS = ["light", "spot", "halo", "shadow", "vignette",
                             "glow", "fog", "dark", "mask", "circle", "lite",
                             "lamp", "torch", "lume", "ambient", "lit"];
+            var EXCLUDE = ["_transform", "_attack", "_ready", "_run",
+                           "_idle", "_walk", "_die", "_hit", "_jump"];
             var MAX_CHANNEL = 240;
-            var lastBlock = null;
+            var keywordExpr = null;
+            var excludeExpr = null;
 
             function evalLingo(code) {
                 var vm = window.__vm;
@@ -67,14 +78,25 @@
                 } catch (_) { return false; }
             }
 
-            function spriteCheck(i) {
-                if (lastBlock === null) {
-                    var parts = [];
-                    for (var k = 0; k < KEYWORDS.length; k++) {
-                        parts.push('NM contains "' + KEYWORDS[k] + '"');
-                    }
-                    lastBlock = parts.join(" or ");
+            function buildExprs() {
+                if (keywordExpr !== null) return;
+                var kp = [];
+                for (var k = 0; k < KEYWORDS.length; k++) {
+                    kp.push('NM contains "' + KEYWORDS[k] + '"');
                 }
+                keywordExpr = kp.join(" or ");
+                var ep = [];
+                for (var k = 0; k < EXCLUDE.length; k++) {
+                    ep.push('NM contains "' + EXCLUDE[k] + '"');
+                }
+                excludeExpr = ep.join(" or ");
+            }
+
+            function spriteCheck(i) {
+                buildExprs();
+                var NM = "sprite(" + i + ").member.name";
+                var kw = keywordExpr.replace(/NM/g, NM);
+                var ex = excludeExpr.replace(/NM/g, NM);
                 // Skip while the mission popup is open — its bgOverlay,
                 // animOverlay, buttons, and bracket use member names that
                 // hit "dark"/"circle"/"mask"/"lit", and the strip would
@@ -83,9 +105,10 @@
                 return (
                     "if not objectp(game.popup) then " +
                     "if voidP(sprite(" + i + ").member) = 0 then " +
-                    "if voidP(sprite(" + i + ").member.name) = 0 then " +
-                    "if (" + lastBlock.replace(/NM/g,
-                        "sprite(" + i + ").member.name") + ") then " +
+                    "if voidP(" + NM + ") = 0 then " +
+                    "if (" + ex + ") then " +
+                    "sprite(" + i + ").visible = 1 " +
+                    "else if (" + kw + ") then " +
                     "sprite(" + i + ").visible = 0"
                 );
             }
