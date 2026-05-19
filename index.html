@@ -75,7 +75,13 @@
                     }
                     lastBlock = parts.join(" or ");
                 }
+                // Skip while the mission popup is open — its bgOverlay,
+                // animOverlay, buttons, and bracket use member names that
+                // hit "dark"/"circle"/"mask"/"lit", and the strip would
+                // re-hide them right after popup_fix_preview makes them
+                // visible, leaving only the white background.
                 return (
+                    "if not objectp(game.popup) then " +
                     "if voidP(sprite(" + i + ").member) = 0 then " +
                     "if voidP(sprite(" + i + ").member.name) = 0 then " +
                     "if (" + lastBlock.replace(/NM/g,
