@@ -14,7 +14,7 @@ This version is the **actual original game**. Every sprite, animation frame, sou
 
 1. The original game files (`game.dcr`, 24 external `.cct` cast libraries, `gamewrapper.dir`) live in `game/` exactly as they shipped.
 2. `dirplayer-polyfill.js` — DirPlayer v0.5.1 compiled to WASM — auto-detects the `<embed type="application/x-director">` element in `index.html` and replaces it with a real Shockwave player.
-3. The WASM VM interprets the original Director chunks and Lingo bytecode, fetches each cast library on demand, and renders to a `<canvas>` element.
+3. The WASM VM interprets the original Director chunks and Lingo bytecode, reuses the preloaded patched cast libraries, and renders to a `<canvas>` element.
 
 No reimplementation. Every pixel, animation, sound, and behavior is the original.
 
@@ -69,7 +69,7 @@ The Lingo bytecode and every cast member are untouched. The patch is idempotent 
 ben10-battle-ready/
   index.html                  -- <embed src="game/game.dcr" type="application/x-director">
   dirplayer-polyfill.js       -- DirPlayer v0.5.1 WASM polyfill (12 MB)
-  ruffle/                     -- Ruffle (Flash player, for any embedded Flash sprites Director may reference)
+  ruffle/                     -- Optional Ruffle payload; default startup disables Flash because the shipped SWF is not gameplay-critical
   css/style.css               -- Page chrome (~30 lines)
   vercel.json                 -- MIME types and cache headers for .dcr/.cct/.wasm
   game/                       -- Original Director files
