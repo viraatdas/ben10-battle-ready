@@ -47,6 +47,9 @@
         lastPose: null,
         lastCharId: null,
         lastGameFrame: 0,
+        lastNativeHideAt: 0,
+        lastWatchActivateAt: 0,
+        nativeWatchOpen: false,
         attackUntil: 0,
         attackCooldownUntil: 0,
         thaws: [],
@@ -217,6 +220,22 @@
         return Number.isFinite(actual) && actual === expected;
     }
 
+    function triggerNativeWatchActivation() {
+        var now = Date.now();
+        if (now - state.lastWatchActivateAt < 220) return false;
+        state.lastWatchActivateAt = now;
+
+        var vm = global.__vm;
+        if (!vm || typeof vm.force_omnitrix_activate !== "function") return false;
+        try {
+            vm.force_omnitrix_activate();
+            state.nativeWatchOpen = true;
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
     async function retryNativeRestore(generation) {
         if (state.stopped || generation !== state.generation) return;
         var restored = await setNativeSpriteVisible(true);
@@ -240,40 +259,33 @@
         return false;
     }
 
+    async function waitForNativeForm(form, generation, timeoutMs) {
+        var deadline = Date.now() + timeoutMs;
+        while (!state.stopped && generation === state.generation && Date.now() < deadline) {
+            var current = await readCharId();
+            if (nativeFormMatches(current, form)) return true;
+            await delay(90);
+        }
+        return false;
+    }
+
     async function fallbackMorph(definition, generation) {
-        var vm = global.__vm;
-        if (!vm || typeof vm.force_omnitrix_morph !== "function") return false;
-
-        try {
-            if (typeof vm.force_omnitrix_activate === "function") {
-                vm.force_omnitrix_activate();
-            }
-            if (typeof vm.force_omnitrix_deactivate === "function") {
-                vm.force_omnitrix_deactivate(definition.carrierId);
-            }
-        } catch (_) {
-            return false;
-        }
-
-        var phases = [1, 2, 3, 4, 5, 6];
-        var waits = [120, 170, 170, 170, 170, 220];
-        for (var index = 0; index < phases.length; index += 1) {
-            await delay(waits[index]);
-            if (generation !== state.generation) return false;
-            try { vm.force_omnitrix_morph(definition.carrierId, phases[index]); } catch (_) {
-                return false;
-            }
-        }
+        await evalLingo("game.transformPlayerToID = " + definition.carrier);
         return waitForCarrier(definition, generation, 900);
     }
 
     async function transformTo(definition) {
+        var ownWatchPopup = state.nativeWatchOpen;
         if (!definition || !state.ready || !state.lastPose ||
                 state.transitioning || state.pendingAlien || state.stopped ||
-                !directorGameplayOpen() || nativePopupOpen()) return false;
+                !directorGameplayOpen() || (!ownWatchPopup && nativePopupOpen())) {
+            if (ownWatchPopup) state.nativeWatchOpen = false;
+            return false;
+        }
 
         var shouldThaw = Boolean(state.activeAlien || state.thaws.length);
         var generation = ++state.generation;
+        state.nativeWatchOpen = false;
         state.pendingAlien = definition;
         state.activeAlien = null;
         state.activeNativeForm = null;
@@ -282,6 +294,9 @@
         closeSelector();
         updateUi();
         showToast("TRANSFORMING INTO " + definition.name.toUpperCase() + "…", definition.color);
+        triggerNativeWatchActivation();
+        state.nativeWatchOpen = false;
+        playTransformSound();
 
         if (shouldThaw) await thawEnemies();
         if (generation !== state.generation || state.stopped) return;
@@ -328,6 +343,7 @@
         await delay(34);
         if (generation !== state.generation || state.stopped) return;
         var nativeHidden = await setNativeSpriteVisible(false);
+        state.lastNativeHideAt = Date.now();
         if (generation !== state.generation || state.stopped) return;
         if (!nativeHidden) {
             state.pendingAlien = null;
@@ -371,6 +387,10 @@
             updateUi();
             return false;
         }
+
+        await setNativeSpriteVisible(false);
+        state.lastNativeHideAt = Date.now();
+        if (generation !== state.generation || state.stopped) return;
         if (state.renderer && state.lastPose) {
             state.renderer.updatePose({
                 x: state.lastPose.x,
@@ -468,39 +488,17 @@
         }
     }
 
-    async function runNativeMorph(charId, generation) {
-        var vm = global.__vm;
-        if (!vm || typeof vm.force_omnitrix_morph !== "function") return false;
-
-        try {
-            if (typeof vm.force_omnitrix_activate === "function") {
-                vm.force_omnitrix_activate();
-            }
-            if (typeof vm.force_omnitrix_deactivate === "function") {
-                vm.force_omnitrix_deactivate(charId);
-            }
-        } catch (_) {
+    async function transformNative(form) {
+        var ownWatchPopup = state.nativeWatchOpen;
+        if (!form || !state.ready || !state.lastPose ||
+                state.transitioning || state.pendingAlien || state.stopped ||
+                !directorGameplayOpen() || (!ownWatchPopup && nativePopupOpen())) {
+            if (ownWatchPopup) state.nativeWatchOpen = false;
             return false;
         }
 
-        var phases = [1, 2, 3, 4, 5, 6];
-        var waits = [350, 200, 200, 200, 200, 250];
-        for (var index = 0; index < phases.length; index += 1) {
-            await delay(waits[index]);
-            if (generation !== state.generation || state.stopped) return false;
-            try { vm.force_omnitrix_morph(charId, phases[index]); } catch (_) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    async function transformNative(form) {
-        if (!form || !state.ready || !state.lastPose ||
-                state.transitioning || state.pendingAlien || state.stopped ||
-                !directorGameplayOpen() || nativePopupOpen()) return false;
-
         var generation = ++state.generation;
+        state.nativeWatchOpen = false;
         state.transitioning = true;
         state.activeAlien = null;
         state.activeNativeForm = null;
@@ -510,6 +508,9 @@
         closeSelector();
         updateUi();
         showToast("TRANSFORMING INTO " + form.name.toUpperCase() + "…", form.color);
+        triggerNativeWatchActivation();
+        state.nativeWatchOpen = false;
+        playTransformSound();
 
         await thawEnemies();
         if (generation !== state.generation || state.stopped) return false;
@@ -522,12 +523,16 @@
             }
         }
 
-        var transformed = await runNativeMorph(form.charId, generation);
-        if (!transformed && form.symbol) {
-            await evalLingo("game.transformPlayerToID = " + form.symbol);
-            transformed = true;
-        }
+        await evalLingo("game.transformPlayerToID = " + form.symbol);
+        var transformed = await waitForNativeForm(form, generation, 1200);
         if (generation !== state.generation || state.stopped) return false;
+
+        if (!transformed) {
+            state.transitioning = false;
+            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
+            updateUi();
+            return false;
+        }
 
         state.transitioning = false;
         state.activeNativeForm = form;
@@ -576,6 +581,12 @@
             Math.abs(dy) <= maxHeight;
     }
 
+    function inSlamRadius(target, maxDistance, maxHeight) {
+        if (!target || !target.attackable) return false;
+        return Math.abs(target.x - target.playerX) <= maxDistance &&
+            Math.abs(target.y - target.playerY) <= maxHeight;
+    }
+
     async function applyAttack(definition) {
         var generation = state.generation;
         var count = await enemyCount();
@@ -592,23 +603,16 @@
                 return;
             }
 
-            if (definition.id === "humungousaur") {
-                await evalLingo(
-                    "game.splashAttackCheck(game.player, " + reference +
-                    ", game.player.getPos(), 120, 45, 0)"
-                );
-                await evalLingo(reference + " = VOID");
-                if (generation !== state.generation || state.stopped) return;
-                continue;
-            }
-
             var target = await readCombatTarget(reference);
             if (generation !== state.generation || state.stopped) {
                 await evalLingo(reference + " = VOID");
                 return;
             }
+            var isHumungousaur = definition.id === "humungousaur";
             var isBigChill = definition.id === "big-chill";
-            var isInRange = isBigChill
+            var isInRange = isHumungousaur
+                ? inSlamRadius(target, 150, 90)
+                : isBigChill
                 ? inForwardWave(target, 250, 50)
                 : inForwardWave(target, 220, 70);
             if (!isInRange) {
@@ -618,7 +622,7 @@
 
             var damageResult = Number(await evalLingo(
                 reference + ".takeDamage(game.player, " +
-                (isBigChill ? "25" : "20") + ")"
+                (isHumungousaur ? "35" : isBigChill ? "25" : "20") + ")"
             ));
             if (generation !== state.generation || state.stopped) {
                 await evalLingo(reference + " = VOID");
@@ -626,6 +630,15 @@
             }
             if (!Number.isFinite(damageResult) || damageResult === 0) {
                 await evalLingo(reference + " = VOID");
+                continue;
+            }
+
+            if (isHumungousaur) {
+                await evalLingo(
+                    reference + ".moveBy(point(game.player.getDir() * 46.0, -5.0))"
+                );
+                await evalLingo(reference + " = VOID");
+                if (generation !== state.generation || state.stopped) return;
                 continue;
             }
 
@@ -679,24 +692,62 @@
         await applyAttack(definition);
     }
 
+    function getAudioContext() {
+        if (!audioContext) {
+            audioContext = typeof global.getAudioContext === "function"
+                ? global.getAudioContext()
+                : new (global.AudioContext || global.webkitAudioContext)();
+        }
+        if (audioContext && audioContext.state === "suspended") audioContext.resume();
+        return audioContext;
+    }
+
+    function playTransformSound() {
+        try {
+            var context = getAudioContext();
+            if (!context) return;
+
+            var now = context.currentTime;
+            var gain = context.createGain();
+            var low = context.createOscillator();
+            var high = context.createOscillator();
+
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.075, now + 0.025);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+
+            low.type = "sawtooth";
+            low.frequency.setValueAtTime(96, now);
+            low.frequency.exponentialRampToValueAtTime(168, now + 0.48);
+
+            high.type = "triangle";
+            high.frequency.setValueAtTime(520, now + 0.04);
+            high.frequency.exponentialRampToValueAtTime(940, now + 0.48);
+
+            low.connect(gain);
+            high.connect(gain);
+            gain.connect(context.destination);
+
+            low.start(now);
+            high.start(now + 0.04);
+            low.stop(now + 0.64);
+            high.stop(now + 0.58);
+        } catch (_) {}
+    }
+
     function playAttackSound(type) {
         try {
-            if (!audioContext) {
-                audioContext = typeof global.getAudioContext === "function"
-                    ? global.getAudioContext()
-                    : new (global.AudioContext || global.webkitAudioContext)();
-            }
-            if (!audioContext) return;
-            if (audioContext.state === "suspended") audioContext.resume();
+            var context = getAudioContext();
+            if (!context) return;
 
-            var now = audioContext.currentTime;
-            var gain = audioContext.createGain();
-            var oscillator = audioContext.createOscillator();
+            var now = context.currentTime;
+            var gain = context.createGain();
+            var oscillator = context.createOscillator();
             gain.gain.setValueAtTime(0.0001, now);
             gain.gain.exponentialRampToValueAtTime(0.09, now + 0.015);
             gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
             oscillator.connect(gain);
-            gain.connect(audioContext.destination);
+            gain.connect(context.destination);
 
             if (type === "sonic") {
                 oscillator.type = "square";
@@ -791,6 +842,16 @@
             } else if (state.activeAlien && !carrierMatches(snapshot.charId, state.activeAlien)) {
                 await deactivateCustomForm("");
             } else if (state.activeAlien && state.renderer) {
+                if (Date.now() - state.lastNativeHideAt > 250) {
+                    await setNativeSpriteVisible(false);
+                    state.lastNativeHideAt = Date.now();
+                    if (state.stopped) return;
+                    if (!state.activeAlien) {
+                        updateUi();
+                        setTimer(pollState, 500);
+                        return;
+                    }
+                }
                 state.renderer.updatePose({
                     x: snapshot.x,
                     y: snapshot.y,
@@ -942,6 +1003,7 @@
             return;
         }
         state.selectorOpen = true;
+        triggerNativeWatchActivation();
         clearRotationTimer();
         state.rotationTimer = setInterval(function () {
             advanceSelection(1);
@@ -958,8 +1020,9 @@
         }
     }
 
-    function closeSelector() {
+    function closeSelector(keepNativeWatch) {
         state.selectorOpen = false;
+        if (!keepNativeWatch) state.nativeWatchOpen = false;
         clearRotationTimer();
         updateUi();
         focusStage();
@@ -973,7 +1036,7 @@
     function commitSelection() {
         if (!state.selectorOpen) return;
         var selected = state.roster[state.selectedIndex];
-        closeSelector();
+        closeSelector(true);
         transformRosterForm(selected);
     }
 
