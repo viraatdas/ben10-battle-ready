@@ -2,6 +2,19 @@
     "use strict";
 
     var CONFIG_URL = "assets/aliens/alien-force.json";
+    var ROTATION_INTERVAL_MS = 340;
+    var NATIVE_FORMS = [
+        { id: "wildmutt", name: "Wildmutt", charId: 1, symbol: "#CHAR_WILDMUTT", color: "#f08b42" },
+        { id: "four-arms", name: "Four Arms", charId: 2, symbol: "#CHAR_FOURARMS", color: "#ff584d" },
+        { id: "heatblast", name: "Heatblast", charId: 3, symbol: "#CHAR_HEATBLAST", color: "#ff9b31" },
+        { id: "xlr8", name: "XLR8", charId: 4, symbol: "#CHAR_XLR8", color: "#56c7ff" },
+        { id: "ghostfreak", name: "Ghostfreak", charId: 5, symbol: "#CHAR_GHOSTFREAK", color: "#cfcfff" },
+        { id: "ripjaws", name: "Ripjaws", charId: 6, symbol: "#CHAR_RIPJAW", color: "#5ecbff" },
+        { id: "stinkfly", name: "Stinkfly", charId: 7, symbol: "#CHAR_STINKFLY", color: "#9fff47" },
+        { id: "gray-matter", name: "Gray Matter", charId: 8, symbol: "#CHAR_GRAYMATTER", color: "#b8f7ff" },
+        { id: "diamondhead", name: "Diamondhead", charId: 9, symbol: "#CHAR_DIAMONDHEAD", color: "#7fffea" },
+        { id: "upgrade", name: "Upgrade", charId: 10, symbol: "#CHAR_UPGRADE", color: "#7fff4f" }
+    ];
     var SNAPSHOT_EXPRESSION = [
         'string(game.player.visSprite.locH)',
         'string(game.player.visSprite.locV)',
@@ -16,9 +29,11 @@
 
     var state = {
         definitions: [],
+        roster: [],
         selectedIndex: 0,
         selectorOpen: false,
         activeAlien: null,
+        activeNativeForm: null,
         pendingAlien: null,
         renderer: null,
         rendererHost: null,
@@ -30,12 +45,14 @@
         pollInFlight: false,
         missedSnapshots: 0,
         lastPose: null,
+        lastCharId: null,
         lastGameFrame: 0,
         attackUntil: 0,
         attackCooldownUntil: 0,
         thaws: [],
         combatSerial: 0,
         swallowXUntilKeyUp: false,
+        rotationTimer: null,
         timers: []
     };
 
@@ -124,17 +141,68 @@
         state.timers.length = 0;
     }
 
+    function normalizeToken(value) {
+        return String(value == null ? "" : value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    }
+
+    function nativeFormMatches(actual, form) {
+        if (!form || actual == null) return false;
+        var normalized = normalizeToken(actual);
+        if (!normalized) return false;
+        var symbol = normalizeToken(form.symbol);
+        var id = String(form.charId);
+        return normalized === id || normalized.indexOf(symbol) !== -1 ||
+            symbol.indexOf(normalized) !== -1;
+    }
+
+    function nativeFormForChar(actual) {
+        for (var index = 0; index < NATIVE_FORMS.length; index += 1) {
+            if (nativeFormMatches(actual, NATIVE_FORMS[index])) {
+                return NATIVE_FORMS[index];
+            }
+        }
+        return null;
+    }
+
+    function customById(id) {
+        return state.definitions.find(function (definition) {
+            return definition.id === id;
+        }) || null;
+    }
+
+    function buildRoster(definitions) {
+        var bigChill = customById("big-chill");
+        var humungousaur = customById("humungousaur");
+        var echoEcho = customById("echo-echo");
+        var roster = [];
+
+        NATIVE_FORMS.forEach(function (form) {
+            roster.push(Object.assign({ custom: false }, form));
+            if (form.id === "four-arms" && humungousaur) {
+                roster.push(Object.assign({ custom: true }, humungousaur));
+            } else if (form.id === "ghostfreak" && bigChill) {
+                roster.push(Object.assign({ custom: true }, bigChill));
+            } else if (form.id === "gray-matter" && echoEcho) {
+                roster.push(Object.assign({ custom: true }, echoEcho));
+            }
+        });
+
+        return roster.length ? roster : definitions.map(function (definition) {
+            return Object.assign({ custom: true }, definition);
+        });
+    }
+
     function carrierMatches(actual, definition) {
         if (!definition || actual == null) return false;
-        var normalized = String(actual).toUpperCase().replace(/[^A-Z0-9]/g, "");
-        var carrier = String(definition.carrier).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        var normalized = normalizeToken(actual);
+        var carrier = normalizeToken(definition.carrier);
         if (!normalized || !carrier) return false;
         return normalized.indexOf(carrier) !== -1 || carrier.indexOf(normalized) !== -1;
     }
 
     function isBen(actual) {
         if (actual == null) return false;
-        var normalized = String(actual).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        var normalized = normalizeToken(actual);
         return normalized === "CHARBEN" || normalized === "BEN" || normalized === "1";
     }
 
@@ -208,6 +276,7 @@
         var generation = ++state.generation;
         state.pendingAlien = definition;
         state.activeAlien = null;
+        state.activeNativeForm = null;
         state.attackUntil = 0;
         state.attackCooldownUntil = 0;
         closeSelector();
@@ -218,11 +287,56 @@
         if (generation !== state.generation || state.stopped) return;
         await setNativeSpriteVisible(true);
         if (generation !== state.generation || state.stopped) return;
+
+        ensureRenderer();
+        var rendererReady = Boolean(
+            state.renderer &&
+            typeof state.renderer.readyFor === "function" &&
+            await state.renderer.readyFor(definition.id)
+        );
+        if (generation !== state.generation || state.stopped) return;
+        if (!rendererReady) {
+            state.pendingAlien = null;
+            if (state.renderer) state.renderer.clear();
+            await setNativeSpriteVisible(true);
+            if (generation !== state.generation || state.stopped) return;
+            showToast("SPRITE UNAVAILABLE", "#ff765f");
+            updateUi();
+            return false;
+        }
+
         if (state.renderer) {
             state.renderer.clear();
             if (state.lastPose) {
+                state.renderer.updatePose({
+                    x: state.lastPose.x,
+                    y: state.lastPose.y,
+                    flipH: state.lastPose.flipH,
+                    blend: state.lastPose.blend,
+                    moving: false,
+                    attacking: false,
+                    alienId: definition.id,
+                    phase: state.lastPose.blend < 0.85 ? 1 : 0
+                });
                 state.renderer.playEffect("transform", state.lastPose, state.lastPose.flipH ? -1 : 1);
             }
+        }
+
+        // Hide the native carrier before the Director morph starts. Otherwise
+        // Big Chill visibly becomes Ghostfreak, Humungousaur becomes Four Arms,
+        // and Echo Echo becomes Gray Matter during the transition.
+        await delay(34);
+        if (generation !== state.generation || state.stopped) return;
+        var nativeHidden = await setNativeSpriteVisible(false);
+        if (generation !== state.generation || state.stopped) return;
+        if (!nativeHidden) {
+            state.pendingAlien = null;
+            if (state.renderer) state.renderer.clear();
+            await setNativeSpriteVisible(true);
+            if (generation !== state.generation || state.stopped) return;
+            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
+            updateUi();
+            return false;
         }
 
         await evalLingo("game.transformPlayerToID = " + definition.carrier);
@@ -234,21 +348,16 @@
         if (!transformed) {
             state.pendingAlien = null;
             await setNativeSpriteVisible(true);
+            if (state.renderer) state.renderer.clear();
             if (generation !== state.generation || state.stopped) return;
             showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
             updateUi();
-            return;
+            return false;
         }
 
-        // Let the final native green-flash frame paint before replacing only
-        // the carrier's bitmap. Physics, damage, camera and mission state stay native.
+        // Let the native state settle while the replacement sprite stays visible.
+        // Physics, damage, camera and mission state stay native.
         await delay(1350);
-        if (generation !== state.generation || state.stopped) return;
-        var rendererReady = Boolean(
-            state.renderer &&
-            typeof state.renderer.readyFor === "function" &&
-            await state.renderer.readyFor(definition.id)
-        );
         if (generation !== state.generation || state.stopped) return;
         var currentCharacter = await readCharId();
         if (generation !== state.generation || state.stopped) return;
@@ -260,19 +369,9 @@
             if (generation !== state.generation || state.stopped) return;
             showToast("TRANSFORMATION INTERRUPTED", "#ff765f");
             updateUi();
-            return;
-        }
-        if (!rendererReady) {
-            state.pendingAlien = null;
-            if (state.renderer) state.renderer.clear();
-            await setNativeSpriteVisible(true);
-            if (generation !== state.generation || state.stopped) return;
-            showToast("SPRITE UNAVAILABLE", "#ff765f");
-            updateUi();
-            return;
+            return false;
         }
         if (state.renderer && state.lastPose) {
-            state.renderer.clear();
             state.renderer.updatePose({
                 x: state.lastPose.x,
                 y: state.lastPose.y,
@@ -283,26 +382,6 @@
                 alienId: definition.id,
                 phase: state.lastPose.blend < 0.85 ? 1 : 0
             });
-            // Give the replacement canvas one paint before hiding the carrier.
-            await delay(34);
-            if (generation !== state.generation || state.stopped) return;
-        }
-        var nativeHidden = await setNativeSpriteVisible(false);
-        if (generation !== state.generation || state.stopped) return;
-        if (!nativeHidden) {
-            state.pendingAlien = null;
-            state.transitioning = true;
-            var restored = await setNativeSpriteVisible(true);
-            if (generation !== state.generation || state.stopped) return;
-            if (restored) {
-                if (state.renderer) state.renderer.clear();
-                state.transitioning = false;
-            } else {
-                setTimer(function () { retryNativeRestore(generation); }, 200);
-            }
-            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
-            updateUi();
-            return;
         }
 
         state.activeAlien = definition;
@@ -310,6 +389,7 @@
         state.missedSnapshots = 0;
         showToast(definition.name.toUpperCase() + " READY", definition.color);
         updateUi();
+        return true;
     }
 
     async function enemyCount() {
@@ -342,6 +422,7 @@
         var generation = ++state.generation;
         state.transitioning = true;
         state.activeAlien = null;
+        state.activeNativeForm = null;
         state.pendingAlien = null;
         state.attackUntil = 0;
         state.attackCooldownUntil = 0;
@@ -362,11 +443,102 @@
     }
 
     async function revertToBen() {
-        if (!state.activeAlien && !state.pendingAlien) return;
-        var generation = await deactivateCustomForm("");
+        if (!state.activeAlien && !state.pendingAlien && !state.activeNativeForm) return;
+
+        var generation;
+        if (state.activeAlien || state.pendingAlien) {
+            generation = await deactivateCustomForm("");
+        } else {
+            generation = ++state.generation;
+            state.transitioning = true;
+            state.activeNativeForm = null;
+            state.attackUntil = 0;
+            state.attackCooldownUntil = 0;
+            closeSelector();
+            await setNativeSpriteVisible(true);
+            if (state.renderer) state.renderer.clear();
+        }
+
         if (generation === state.generation && !state.stopped) {
             await evalLingo("game.transformPlayerToID = #CHAR_BEN");
+            state.activeNativeForm = null;
+            state.transitioning = false;
+            showToast("BEN READY", "#aaff86");
+            updateUi();
         }
+    }
+
+    async function runNativeMorph(charId, generation) {
+        var vm = global.__vm;
+        if (!vm || typeof vm.force_omnitrix_morph !== "function") return false;
+
+        try {
+            if (typeof vm.force_omnitrix_activate === "function") {
+                vm.force_omnitrix_activate();
+            }
+            if (typeof vm.force_omnitrix_deactivate === "function") {
+                vm.force_omnitrix_deactivate(charId);
+            }
+        } catch (_) {
+            return false;
+        }
+
+        var phases = [1, 2, 3, 4, 5, 6];
+        var waits = [350, 200, 200, 200, 200, 250];
+        for (var index = 0; index < phases.length; index += 1) {
+            await delay(waits[index]);
+            if (generation !== state.generation || state.stopped) return false;
+            try { vm.force_omnitrix_morph(charId, phases[index]); } catch (_) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    async function transformNative(form) {
+        if (!form || !state.ready || !state.lastPose ||
+                state.transitioning || state.pendingAlien || state.stopped ||
+                !directorGameplayOpen() || nativePopupOpen()) return false;
+
+        var generation = ++state.generation;
+        state.transitioning = true;
+        state.activeAlien = null;
+        state.activeNativeForm = null;
+        state.pendingAlien = null;
+        state.attackUntil = 0;
+        state.attackCooldownUntil = 0;
+        closeSelector();
+        updateUi();
+        showToast("TRANSFORMING INTO " + form.name.toUpperCase() + "…", form.color);
+
+        await thawEnemies();
+        if (generation !== state.generation || state.stopped) return false;
+        await setNativeSpriteVisible(true);
+        if (generation !== state.generation || state.stopped) return false;
+        if (state.renderer) {
+            state.renderer.clear();
+            if (state.lastPose) {
+                state.renderer.playEffect("transform", state.lastPose, state.lastPose.flipH ? -1 : 1);
+            }
+        }
+
+        var transformed = await runNativeMorph(form.charId, generation);
+        if (!transformed && form.symbol) {
+            await evalLingo("game.transformPlayerToID = " + form.symbol);
+            transformed = true;
+        }
+        if (generation !== state.generation || state.stopped) return false;
+
+        state.transitioning = false;
+        state.activeNativeForm = form;
+        showToast(form.name.toUpperCase() + " READY", form.color);
+        updateUi();
+        return transformed;
+    }
+
+    function transformRosterForm(form) {
+        if (!form) return Promise.resolve(false);
+        return form.custom ? transformTo(form) : transformNative(form);
     }
 
     async function readCombatTarget(target) {
@@ -596,6 +768,7 @@
         } else {
             state.missedSnapshots = 0;
             state.ready = snapshot.x !== 0 || snapshot.y !== 0;
+            state.lastCharId = snapshot.charId;
             state.lastGameFrame = snapshot.gameFrame;
 
             var previous = state.lastPose;
@@ -628,6 +801,10 @@
                     alienId: state.activeAlien.id,
                     phase: snapshot.blend < 0.85 ? 1 : 0
                 });
+            } else if (!state.pendingAlien && !state.transitioning) {
+                state.activeNativeForm = isBen(snapshot.charId)
+                    ? null
+                    : nativeFormForChar(snapshot.charId);
             }
 
             if (state.thaws.length) {
@@ -688,36 +865,6 @@
         await setNativeSpriteVisible(false);
     }
 
-    function paintPortrait(canvas, definition) {
-        var frame = definition.frames && definition.frames.idle;
-        if (!frame || !definition.sprite) return;
-        var image = new global.Image();
-        image.onload = function () {
-            var context = canvas.getContext("2d");
-            if (!context) return;
-            context.clearRect(0, 0, canvas.width, canvas.height);
-            context.imageSmoothingEnabled = false;
-            var scale = Math.min(
-                (canvas.width - 12) / frame.width,
-                (canvas.height - 8) / frame.height
-            );
-            var width = frame.width * scale;
-            var height = frame.height * scale;
-            context.drawImage(
-                image,
-                frame.x,
-                frame.y,
-                frame.width,
-                frame.height,
-                (canvas.width - width) / 2,
-                canvas.height - height - 3,
-                width,
-                height
-            );
-        };
-        image.src = definition.sprite;
-    }
-
     function buildUi() {
         var container = global.document && global.document.querySelector("#game-container");
         if (!container || state.ui) return;
@@ -726,62 +873,29 @@
         root.className = "alien-force-ui";
         root.setAttribute("data-alien-force-ui", "true");
 
-        var hint = global.document.createElement("button");
-        hint.type = "button";
-        hint.className = "alien-force-hint";
-        hint.setAttribute("aria-controls", "alien-force-selector");
-        hint.setAttribute("aria-expanded", "false");
-        hint.innerHTML = '<kbd>C</kbd><span>NEW ALIENS</span>';
-        hint.addEventListener("click", toggleSelector);
-
         var selector = global.document.createElement("section");
         selector.id = "alien-force-selector";
         selector.className = "alien-force-selector";
-        selector.setAttribute("role", "dialog");
-        selector.setAttribute("aria-modal", "true");
+        selector.setAttribute("role", "status");
         selector.setAttribute("aria-labelledby", "alien-force-title");
         selector.hidden = true;
 
         var title = global.document.createElement("h2");
         title.id = "alien-force-title";
-        title.textContent = "OMNITRIX EXPANSION";
+        title.textContent = "OMNITRIX";
         selector.appendChild(title);
 
-        var cards = global.document.createElement("div");
-        cards.className = "alien-force-cards";
-        var cardElements = [];
-        state.definitions.forEach(function (definition, index) {
-            var card = global.document.createElement("button");
-            card.type = "button";
-            card.className = "alien-force-card";
-            card.style.setProperty("--alien-color", definition.color);
-            card.setAttribute("data-alien-id", definition.id);
-            card.setAttribute("aria-label", "Transform into " + definition.name);
-
-            var portrait = global.document.createElement("canvas");
-            portrait.className = "alien-force-portrait alien-force-portrait--" + definition.id;
-            portrait.width = 180;
-            portrait.height = 112;
-            portrait.setAttribute("aria-hidden", "true");
-            paintPortrait(portrait, definition);
-            var name = global.document.createElement("strong");
-            name.textContent = definition.name;
-            card.appendChild(portrait);
-            card.appendChild(name);
-            card.addEventListener("click", function () {
-                state.selectedIndex = index;
-                updateUi();
-                transformTo(definition);
-            });
-            cards.appendChild(card);
-            cardElements.push(card);
+        var rotation = global.document.createElement("div");
+        rotation.className = "alien-force-rotation";
+        var slotElements = [];
+        ["previous", "current", "next"].forEach(function (slotName) {
+            var slot = global.document.createElement("div");
+            slot.className = "alien-force-slot alien-force-slot--" + slotName;
+            slot.setAttribute("aria-hidden", slotName === "current" ? "false" : "true");
+            rotation.appendChild(slot);
+            slotElements.push(slot);
         });
-        selector.appendChild(cards);
-
-        var help = global.document.createElement("p");
-        help.className = "alien-force-help";
-        help.innerHTML = "← → SELECT&nbsp;&nbsp; • &nbsp;&nbsp;SPACE TRANSFORM&nbsp;&nbsp; • &nbsp;&nbsp;C CLOSE";
-        selector.appendChild(help);
+        selector.appendChild(rotation);
 
         var toast = global.document.createElement("div");
         toast.className = "alien-force-toast";
@@ -789,24 +903,38 @@
         toast.setAttribute("aria-live", "polite");
         toast.hidden = true;
 
-        root.appendChild(hint);
         root.appendChild(selector);
         root.appendChild(toast);
         container.appendChild(root);
 
         state.ui = {
             root: root,
-            hint: hint,
             selector: selector,
-            cards: cardElements,
+            slots: slotElements,
             toast: toast,
             toastTimer: null
         };
         updateUi();
     }
 
+    function clearRotationTimer() {
+        if (!state.rotationTimer) return;
+        clearInterval(state.rotationTimer);
+        state.rotationTimer = null;
+    }
+
+    function advanceSelection(direction) {
+        if (!state.roster.length) return;
+        state.selectedIndex = (
+            state.selectedIndex + direction + state.roster.length
+        ) % state.roster.length;
+        updateUi();
+    }
+
     function openSelector() {
-        if (!canUseExpansion() || !state.ui) {
+        if (!state.ui || !state.roster.length || !canUseExpansion() ||
+                state.activeAlien || state.pendingAlien || state.activeNativeForm ||
+                !isBen(state.lastCharId)) {
             showToast(
                 nativePopupOpen() ? "CLOSE THE MISSION PROMPT FIRST" : "ENTER A PLAYABLE AREA FIRST",
                 "#ffdf66"
@@ -814,12 +942,11 @@
             return;
         }
         state.selectorOpen = true;
+        clearRotationTimer();
+        state.rotationTimer = setInterval(function () {
+            advanceSelection(1);
+        }, ROTATION_INTERVAL_MS);
         updateUi();
-        setTimeout(function () {
-            if (state.selectorOpen && state.ui && state.ui.cards[state.selectedIndex]) {
-                state.ui.cards[state.selectedIndex].focus({ preventScroll: true });
-            }
-        }, 0);
     }
 
     function focusStage() {
@@ -833,6 +960,7 @@
 
     function closeSelector() {
         state.selectorOpen = false;
+        clearRotationTimer();
         updateUi();
         focusStage();
     }
@@ -842,23 +970,27 @@
         else openSelector();
     }
 
+    function commitSelection() {
+        if (!state.selectorOpen) return;
+        var selected = state.roster[state.selectedIndex];
+        closeSelector();
+        transformRosterForm(selected);
+    }
+
     function updateUi() {
         if (!state.ui) return;
         state.ui.selector.hidden = !state.selectorOpen;
-        state.ui.hint.setAttribute("aria-expanded", state.selectorOpen ? "true" : "false");
-        state.ui.hint.hidden = !canUseExpansion() || state.selectorOpen;
-        state.ui.cards.forEach(function (card, index) {
-            var selected = index === state.selectedIndex;
-            card.classList.toggle("is-selected", selected);
-            card.setAttribute("aria-pressed", selected ? "true" : "false");
+        if (!state.ui.slots || !state.roster.length) return;
+
+        var length = state.roster.length;
+        var previous = state.roster[(state.selectedIndex - 1 + length) % length];
+        var current = state.roster[state.selectedIndex % length];
+        var next = state.roster[(state.selectedIndex + 1) % length];
+        [previous, current, next].forEach(function (form, index) {
+            var slot = state.ui.slots[index];
+            slot.textContent = form ? form.name.toUpperCase() : "";
+            slot.style.setProperty("--alien-color", form && form.color ? form.color : "#7fff61");
         });
-        if (state.activeAlien) {
-            state.ui.hint.querySelector("span").textContent = state.activeAlien.name.toUpperCase();
-            state.ui.hint.style.setProperty("--active-alien-color", state.activeAlien.color);
-        } else {
-            state.ui.hint.querySelector("span").textContent = "NEW ALIENS";
-            state.ui.hint.style.removeProperty("--active-alien-color");
-        }
     }
 
     function showToast(message, color) {
@@ -883,13 +1015,22 @@
     }
 
     function onKeyDown(event) {
-        if (event.repeat && event.code !== "ArrowLeft" && event.code !== "ArrowRight") return;
-
-        if (event.code === "KeyC") {
+        if (event.code === "KeyX") {
             consumeEvent(event);
-            toggleSelector();
+            state.swallowXUntilKeyUp = true;
+            if (event.repeat) return;
+
+            var nativeCurrent = state.activeNativeForm || nativeFormForChar(state.lastCharId);
+            if (state.activeAlien || state.pendingAlien || nativeCurrent) {
+                revertToBen();
+                return;
+            }
+
+            openSelector();
             return;
         }
+
+        if (event.repeat && event.code !== "ArrowLeft" && event.code !== "ArrowRight") return;
 
         if (state.selectorOpen) {
             if (event.code === "Escape") {
@@ -900,18 +1041,12 @@
             if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
                 consumeEvent(event);
                 var direction = event.code === "ArrowLeft" ? -1 : 1;
-                state.selectedIndex = (
-                    state.selectedIndex + direction + state.definitions.length
-                ) % state.definitions.length;
-                updateUi();
-                if (state.ui && state.ui.cards[state.selectedIndex]) {
-                    state.ui.cards[state.selectedIndex].focus({ preventScroll: true });
-                }
+                advanceSelection(direction);
                 return;
             }
             if (event.code === "Space" || event.code === "Enter") {
                 consumeEvent(event);
-                transformTo(state.definitions[state.selectedIndex]);
+                commitSelection();
                 return;
             }
             if (/^Arrow/.test(event.code)) consumeEvent(event);
@@ -923,20 +1058,12 @@
             performAttack();
             return;
         }
-
-        // The Stage component tracks only transforms chosen through its own
-        // ten-slot dial. Handle revert here so an extension-selected carrier
-        // cannot be mistaken for a fresh Ben-to-alien transformation.
-        if ((state.activeAlien || state.pendingAlien) && event.code === "KeyX") {
-            consumeEvent(event);
-            state.swallowXUntilKeyUp = true;
-            revertToBen();
-        }
     }
 
     function onKeyUp(event) {
         if (state.swallowXUntilKeyUp && event.code === "KeyX") {
             consumeEvent(event);
+            if (state.selectorOpen) commitSelection();
             state.swallowXUntilKeyUp = false;
         }
     }
@@ -954,6 +1081,7 @@
     async function boot() {
         try {
             state.definitions = await loadDefinitions();
+            state.roster = buildRoster(state.definitions);
             if (state.stopped) return;
             buildUi();
             global.addEventListener("keydown", onKeyDown, true);
@@ -973,8 +1101,10 @@
         ++state.generation;
         state.transitioning = true;
         state.activeAlien = null;
+        state.activeNativeForm = null;
         state.pendingAlien = null;
         state.selectorOpen = false;
+        clearRotationTimer();
         clearTimers();
         global.removeEventListener("keydown", onKeyDown, true);
         global.removeEventListener("keyup", onKeyUp, true);
@@ -1000,6 +1130,7 @@
                 selectorOpen: state.selectorOpen,
                 selectedIndex: state.selectedIndex,
                 activeAlien: state.activeAlien ? state.activeAlien.id : null,
+                activeNativeForm: state.activeNativeForm ? state.activeNativeForm.id : null,
                 pendingAlien: state.pendingAlien ? state.pendingAlien.id : null,
                 pose: state.lastPose ? Object.assign({}, state.lastPose) : null
             };

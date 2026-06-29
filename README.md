@@ -12,16 +12,18 @@ This version is the **actual original game**. Its levels, original characters,
 animation frames, sound effects, and Lingo bytecode are the files Cartoon
 Network shipped in 2005. The browser runs the original `game.dcr` and 24 `.cct`
 cast libraries through a WASM emulator. A small, isolated browser layer adds
-three optional Alien Force transformations without replacing the Director game.
+three Alien Force transformations to the normal Omnitrix rotation without
+replacing the Director game.
 
 ## How it works
 
 1. The original game files (`game.dcr`, 24 external `.cct` cast libraries, `gamewrapper.dir`) live in `game/` exactly as they shipped.
 2. `dirplayer-polyfill.js` — DirPlayer v0.5.1 compiled to WASM — auto-detects the `<embed type="application/x-director">` element in `index.html` and replaces it with a real Shockwave player.
 3. The WASM VM interprets the original Director chunks and Lingo bytecode, reuses the preloaded patched cast libraries, and renders to a `<canvas>` element.
-4. `js/alien-force-extension.js` reuses native character physics and combat for
-   Big Chill, Humungousaur, and Echo Echo, while a second 600×400 canvas draws
-   their new sprite art in the same responsive stage.
+4. `js/alien-force-extension.js` integrates Big Chill, Humungousaur, and Echo
+   Echo into the normal Omnitrix rotation while reusing native character
+   physics and combat. A second 600×400 canvas draws their new sprite art in
+   the same responsive stage.
 
 The expansion is deliberately additive: deleting its two scripts, stylesheet,
 and assets leaves the original game intact.
@@ -81,11 +83,11 @@ ben10-battle-ready/
   index.html                  -- <embed data-src="game/game.dcr" type="application/x-director">
   dirplayer-polyfill.js       -- DirPlayer v0.5.1 WASM polyfill (12 MB)
   assets/aliens/              -- Three generated sprite sheets + frame/ability data
-  js/alien-force-extension.js -- New-form selection, native state bridge, attacks
+  js/alien-force-extension.js -- Omnitrix rotation bridge, native state bridge, attacks
   js/alien-force-renderer.js  -- Stage-aligned sprite and attack-effect canvas
   ruffle/                     -- Optional Ruffle payload; default startup disables Flash because the shipped SWF is not gameplay-critical
   css/style.css               -- Responsive page chrome
-  css/alien-force.css         -- Expansion selector and status UI
+  css/alien-force.css         -- Omnitrix rotation and status UI
   vercel.json                 -- MIME types and cache headers for .dcr/.cct/.wasm
   game/                       -- Original Director files
     game.dcr                  -- Patched main movie (MCsL only)
@@ -107,15 +109,15 @@ Reverse-engineered from the game's own bytecode (`class_Game.keyMgr_keyDown` is 
 |---|---|
 | Arrow keys | Move Ben / navigate menus |
 | Space | Attack / confirm menu button |
-| **X** (hold) | Open Omnitrix dial — works **only on level 1 and 12** (`if (g.levelID = 1) or (g.levelID = 12)`). The dial auto-rotates while held; release to commit the highlighted alien. Press X again while transformed to revert to Ben. |
-| **C** | Open/close the three-slot Alien Force selector in a playable area. Use Left/Right and Space, or click a card. |
+| **X** (hold) | Rotate through the Omnitrix roster, including Big Chill, Humungousaur, and Echo Echo. Release to transform. Press X again while transformed to revert to Ben. |
 | Esc | Cancel / close popup |
 
 Levels 2–11 are mission levels and lock you to one specific alien (`LEVEL_DEFAULT_CHARS[N]`), so X does nothing there.
 
 ## Alien Force expansion
 
-Press **C** while the player is visible to choose one of three additional forms:
+Hold **X** in a playable Ben area to rotate through the full Omnitrix roster.
+The three additional forms are inserted near their native carriers:
 
 - **Big Chill** uses Ghostfreak's native phase/fly collision mask, so he can pass
   through phase walls. Space emits a line-of-sight-aware freeze wave that deals
@@ -127,8 +129,10 @@ Press **C** while the player is visible to choose one of three additional forms:
 
 The extension reads the native player's position, facing, blend, action, and
 game-frame clock through DirPlayer's serialized MCP bridge. Native collision,
-camera, health, damage, mission, and pause logic remain authoritative. If an
-asset or the extension fails to load, the Director game continues normally.
+camera, health, damage, mission, and pause logic remain authoritative. Custom
+form sprites are drawn before their carrier morph begins, so Big Chill no
+longer visibly becomes Ghostfreak during the transition. If an asset or the
+extension fails to load, the Director game continues normally.
 
 The designs and power behavior were checked against Dwayne McDuffie's
 [Alien Force series bible](https://dwaynemcduffie.com/wp-content/uploads/2024/07/WEBSITE-B10Hero-Generation-SERIES-BIBLE-by-Dwayne.pdf).
@@ -147,7 +151,7 @@ Level 1 is the **hub**, not a level. From level 1:
 
 After completing a mission, the game returns you to level 1, marks that mission as done, and unlocks the alien permanently in your Omnitrix. Beat all 10 missions to open the boss door (level 12).
 
-Alternative path: hold X on level 1 to manually rotate the Omnitrix dial and pick an alien that way — same outcome.
+You can also stay in the hub and hold X to rotate through the full Omnitrix roster directly.
 
 ## Running locally
 
