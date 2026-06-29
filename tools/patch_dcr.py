@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """Patch a Director afterburner .dcr file's MCsL chunk to replace
-'empty.cst' placeholder cast paths with unique per-cast filenames.
+``empty.cst`` placeholder cast paths with unique per-cast filenames.
 
 This is needed because the original Ben 10 game stores all external
 cast filenames as 'empty.cst' and relies on runtime Lingo to rewrite
 them — which DirPlayer's emulator doesn't currently re-trigger.
-"""
-import struct, zlib, sys, os
 
-IN_PATH  = "game/game.dcr"
-OUT_PATH = "game/game.patched.dcr"
+The checked-in ``game/game.dcr`` is already patched. Running this tool
+against it validates the 24 names and exits successfully without rewriting
+the binary. Pass an original DCR and optionally ``--output`` to create a
+patched copy.
+"""
+
+import argparse
+import shutil
+import struct
+import zlib
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_INPUT = PROJECT_ROOT / "game" / "game.dcr"
 
 # Ordered cast lib names matching the 24 'empty.cst' occurrences in MCsL.
 # Derived from MCsL inspection — first 19 are char_*, then game, then 4 maps.
@@ -25,19 +36,41 @@ CAST_ORDER = [
 # Patched filenames must be exactly the same length as "empty.cst" (9 bytes)
 # so the MCsL chunk's byte offsets don't shift. Use emp01.cst..emp24.cst.
 PATCHED_NAMES = [f"emp{i:02d}.cst" for i in range(1, 25)]
-assert all(len(n) == 9 for n in PATCHED_NAMES)
-assert len(PATCHED_NAMES) == len(CAST_ORDER) == 24
+if not all(len(name) == 9 for name in PATCHED_NAMES):
+    raise RuntimeError("Patched cast names must remain nine bytes long")
+if len(PATCHED_NAMES) != len(CAST_ORDER) or len(CAST_ORDER) != 24:
+    raise RuntimeError("The patched-name and cast-library tables must contain 24 entries")
+
+
+def require(condition, message):
+    """Raise a useful error even when Python assertions are disabled."""
+    if not condition:
+        raise ValueError(message)
+
 
 def read_varint(buf, pos):
+    """Read a bounded Director varint and return ``(value, next_position)``."""
+    require(
+        0 <= pos <= len(buf),
+        f"Varint offset {pos} is outside a {len(buf)}-byte buffer",
+    )
     val = 0
-    while True:
-        b = buf[pos]; pos += 1
+    for _ in range(10):
+        require(pos < len(buf), "Truncated varint")
+        b = buf[pos]
+        pos += 1
         val = (val << 7) | (b & 0x7F)
         if (b & 0x80) == 0:
             return val, pos
+    raise ValueError("Varint exceeds the supported 10-byte limit")
+
 
 def write_varint(val):
     """Write a big-endian-style varint (MSB groups first, high bit = continue)."""
+    require(
+        isinstance(val, int) and val >= 0,
+        f"Cannot encode negative varint {val!r}",
+    )
     if val == 0:
         return bytes([0])
     parts = []
@@ -53,41 +86,84 @@ def write_varint(val):
             out.append(p)
     return bytes(out)
 
+
+def find_all(buf, needle):
+    """Return every non-overlapping occurrence of ``needle`` in ``buf``."""
+    positions = []
+    pos = 0
+    while True:
+        pos = buf.find(needle, pos)
+        if pos < 0:
+            return positions
+        positions.append(pos)
+        pos += len(needle)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "input",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_INPUT,
+        help="DCR to inspect or patch (default: game/game.dcr)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="output path (default for an unpatched input: <input>.patched.dcr)",
+    )
+    return parser.parse_args()
+
+
 def main():
-    with open(IN_PATH, "rb") as f:
-        data = f.read()
+    args = parse_args()
+    input_path = args.input.expanduser().resolve()
+    output_path = args.output.expanduser().resolve() if args.output else None
+    data = input_path.read_bytes()
 
     # XFIR header
-    assert data[:4] == b"XFIR"
+    require(len(data) >= 12, f"{input_path} is too short to be a Director file")
+    require(data[:4] == b"XFIR", f"{input_path} does not start with an XFIR header")
+    declared_size = struct.unpack_from("<I", data, 4)[0]
+    require(
+        declared_size == len(data) - 8,
+        f"XFIR size field is {declared_size}, expected {len(data) - 8}",
+    )
     subtype = data[8:12]
-    assert subtype == b"MDGF"
+    require(subtype == b"MDGF", f"Unsupported Director subtype {subtype!r}; expected MDGF")
 
     pos = 12
     # Fver
     fver_tag = data[pos:pos+4]; pos += 4
     fver_len, pos = read_varint(data, pos)
     fver_payload = data[pos:pos+fver_len]; pos += fver_len
-    fver_start = pos - 4 - len(write_varint(fver_len)) - fver_len  # for later
+    require(fver_tag == b"revF", f"Expected Fver chunk, found {fver_tag!r}")
     # Fcdr
     fcdr_tag = data[pos:pos+4]; pos += 4
     fcdr_len, pos = read_varint(data, pos)
     fcdr_payload = data[pos:pos+fcdr_len]; pos += fcdr_len
+    require(fcdr_tag == b"rdcF", f"Expected Fcdr chunk, found {fcdr_tag!r}")
     # ABMP
     abmp_tag = data[pos:pos+4]; pos += 4
     abmp_length, pos = read_varint(data, pos)
     abmp_end = pos + abmp_length
-    abmp_ct_pos = pos
     abmp_ct, pos = read_varint(data, pos)
     abmp_ul, pos = read_varint(data, pos)
-    abmp_zlib_start = pos
+    require(abmp_tag == b"PMBA", f"Expected ABMP chunk, found {abmp_tag!r}")
+    require(abmp_end <= len(data), "ABMP chunk extends beyond the input file")
     abmp_uncomp = zlib.decompress(data[pos:abmp_end])
-    assert len(abmp_uncomp) == abmp_ul
+    require(
+        len(abmp_uncomp) == abmp_ul,
+        "ABMP uncompressed size does not match its header",
+    )
     pos = abmp_end
     # FGEI
     fgei_tag = data[pos:pos+4]; pos += 4
-    ils_unk_pos = pos
     ils_unk, pos = read_varint(data, pos)
     ils_body_offset = pos
+    require(fgei_tag == b"IEGF", f"Expected FGEI chunk, found {fgei_tag!r}")
     # ILS chunk_info is in ABMP — read it out
     ap = 0
     _u1, ap = read_varint(abmp_uncomp, ap)
@@ -112,13 +188,20 @@ def main():
         }
         chunk_order.append(rid)
 
+    require(
+        2 in chunks,
+        "ABMP does not contain the initial-load-segment entry (resource 2)",
+    )
     ils_info = chunks[2]
     print(f"ILS comp_size={ils_info['comp_size']} uncomp_size={ils_info['uncomp_size']}")
 
     # Read and decompress ILS body
     ils_zlib = data[ils_body_offset:ils_body_offset+ils_info["comp_size"]]
     ils_uncomp = zlib.decompress(ils_zlib)
-    assert len(ils_uncomp) == ils_info["uncomp_size"]
+    require(
+        len(ils_uncomp) == ils_info["uncomp_size"],
+        "ILS uncompressed size does not match its ABMP entry",
+    )
     ils_after_pos = ils_body_offset + ils_info["comp_size"]
 
     # Within ILS uncomp, locate MCsL chunk
@@ -136,30 +219,49 @@ def main():
             mcsl_end = ip + clen
             break
         ip += clen
-    assert mcsl_start is not None
+    require(mcsl_start is not None, "Could not locate MCsL resource 53799 in the ILS")
     mcsl_bytes = bytearray(ils_uncomp[mcsl_start:mcsl_end])
     print(f"MCsL @ ILS offset {mcsl_start}, length {len(mcsl_bytes)}")
 
-    # Patch the 24 'empty.cst' occurrences with unique 9-char names
-    occurrences = []
-    needle = b"empty.cst"
-    p = 0
-    while True:
-        p = mcsl_bytes.find(needle, p)
-        if p < 0: break
-        occurrences.append(p)
-        p += 1
-    assert len(occurrences) == 24, f"Expected 24 'empty.cst', got {len(occurrences)}"
+    # Patch the 24 'empty.cst' occurrences with unique 9-char names. The
+    # repository stores the patched file, so explicitly recognize that state
+    # instead of treating a second run as corruption.
+    occurrences = find_all(mcsl_bytes, b"empty.cst")
+    patched_positions = [
+        find_all(mcsl_bytes, name.encode("ascii")) for name in PATCHED_NAMES
+    ]
+    is_patched = (
+        not occurrences
+        and all(len(positions) == 1 for positions in patched_positions)
+        and [positions[0] for positions in patched_positions]
+        == sorted(positions[0] for positions in patched_positions)
+    )
+
+    if is_patched:
+        print("Already patched: all 24 empNN.cst cast names are present in order.")
+        if output_path is not None and output_path != input_path:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(input_path, output_path)
+            print(f"Copied validated DCR to {output_path}")
+        return
+
+    found_patched = sum(len(positions) for positions in patched_positions)
+    require(
+        len(occurrences) == 24 and found_patched == 0,
+        "MCsL cast paths are neither clean nor fully patched "
+        f"(empty.cst={len(occurrences)}, empNN.cst={found_patched})",
+    )
 
     for i, off in enumerate(occurrences):
         new_name = PATCHED_NAMES[i].encode("ascii")
-        assert len(new_name) == 9
         mcsl_bytes[off:off+9] = new_name
         print(f"  [{i}] @ MCsL[{off}]: emp{i+1:02d}.cst → {CAST_ORDER[i]}.cct")
 
     # Splice back into ILS uncomp
-    new_ils_uncomp = ils_uncomp[:mcsl_start] + bytes(mcsl_bytes) + ils_uncomp[mcsl_end:]
-    assert len(new_ils_uncomp) == len(ils_uncomp), "ILS length must remain identical"
+    new_ils_uncomp = (
+        ils_uncomp[:mcsl_start] + bytes(mcsl_bytes) + ils_uncomp[mcsl_end:]
+    )
+    require(len(new_ils_uncomp) == len(ils_uncomp), "ILS length must remain identical")
 
     # Re-compress ILS body, matching the original compression level if we can.
     # Try multiple levels and pick the one that gives the same or smaller size.
@@ -174,12 +276,18 @@ def main():
 
     if len(best_zlib) > len(ils_zlib):
         # We need to shift everything after ILS forward. Update ABMP offsets.
-        print(f"ILS grew by {len(best_zlib) - len(ils_zlib)} bytes — will shift trailing chunks")
+        print(
+            f"ILS grew by {len(best_zlib) - len(ils_zlib)} bytes "
+            "— will shift trailing chunks"
+        )
         size_delta = len(best_zlib) - len(ils_zlib)
     elif len(best_zlib) < len(ils_zlib):
         # Pad ILS to keep file layout. Append a deflate uncompressed block of zeros?
         # Easier: shift trailing chunks BACKWARDS (negative delta)
-        print(f"ILS shrank by {len(ils_zlib) - len(best_zlib)} bytes — will shift trailing chunks back")
+        print(
+            f"ILS shrank by {len(ils_zlib) - len(best_zlib)} bytes "
+            "— will shift trailing chunks back"
+        )
         size_delta = len(best_zlib) - len(ils_zlib)
     else:
         size_delta = 0
@@ -225,7 +333,9 @@ def main():
     # i.e. abmp_length = len(write_varint(comp_type)) + len(write_varint(uncomp_len)) + len(zlib_data)
     new_abmp_ct_v = write_varint(abmp_ct)  # keep same compression type
     new_abmp_ul_v = write_varint(new_abmp_uncomp_len)
-    new_abmp_inner_size = len(new_abmp_ct_v) + len(new_abmp_ul_v) + len(new_abmp_zlib)
+    new_abmp_inner_size = (
+        len(new_abmp_ct_v) + len(new_abmp_ul_v) + len(new_abmp_zlib)
+    )
     new_abmp_length_v = write_varint(new_abmp_inner_size)
 
     # Assemble new file
@@ -260,9 +370,12 @@ def main():
     total_size = len(out)
     struct.pack_into("<I", out, 4, total_size - 8)
 
-    with open(OUT_PATH, "wb") as f:
-        f.write(out)
-    print(f"\nWrote {OUT_PATH}: {total_size} bytes (was {len(data)})")
+    if output_path is None:
+        output_path = input_path.with_name(f"{input_path.stem}.patched{input_path.suffix}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(out)
+    print(f"\nWrote {output_path}: {total_size} bytes (was {len(data)})")
+
 
 if __name__ == "__main__":
     main()
