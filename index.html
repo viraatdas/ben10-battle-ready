@@ -35,94 +35,120 @@
     <link rel="preload" as="fetch" href="game/emp23.cct" crossorigin>
     <link rel="preload" as="fetch" href="game/emp24.cct" crossorigin>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/alien-force.css">
 </head>
 <body>
     <div id="game-container">
-        <noscript>
-            <embed
-                id="game"
-                src="game/game.dcr"
-                type="application/x-director"
-                width="780"
-                height="480"
-                bgcolor="#000000"
-                swStretchStyle="none"
-                data-sw-_runMode="Plugin"
-                data-sw-_moviePath="game/"
-            >
-        </noscript>
+        <!-- data-src keeps the browser from invoking its removed native
+             plug-in path; DirPlayer recognizes the MIME type and consumes
+             data-src when it replaces this element at DOMContentLoaded. -->
+        <embed
+            id="game"
+            data-src="game/game.dcr"
+            type="application/x-director"
+            bgcolor="#000000"
+            swStretchStyle="none"
+            data-sw-_runMode="Plugin"
+            data-sw-_moviePath="game/"
+        >
     </div>
 
-    <!-- The only shipped SWF is a legacy tracker, so skip Ruffle during boot. -->
+    <!-- The standalone SWF is a legacy tracker. The embedded mission Flash
+         member is replaced with a native bitmap below, so Ruffle is not
+         needed during boot. -->
     <script src="dirplayer-polyfill.js" data-disable-flash></script>
+    <script src="js/alien-force-renderer.js"></script>
+    <script src="js/alien-force-extension.js"></script>
     <script>
         // Window-level ESC fallback: the polyfill's React onKeyDown only fires
         // when the game container has focus, which is easy to lose (clicking
         // outside the canvas, opening DevTools, etc).
         window.addEventListener("keydown", function (e) {
             if (e.key !== "Escape" && e.keyCode !== 27) return;
-            var fn = window.force_exit_mission;
+            if (window.Ben10AlienForce &&
+                    window.Ben10AlienForce.getState().selectorOpen) return;
+            var fn = window.__vm && window.__vm.force_exit_mission;
             if (typeof fn !== "function") return;
             e.preventDefault();
             try { fn(); } catch (_) {}
         }, true);
 
-        // Strip the soft circular character shadow. It is rendered by the
-        // original Director scene, so the page has to hide the runtime sprite
-        // through Lingo rather than CSS.
+        // The mission preview is an embedded Flash member that DirPlayer
+        // currently paints as an opaque white rectangle. Repair the popup
+        // through the safe MCP expression bridge: hide the broken intro
+        // filmloop, keep the native controls visible, and use each alien's
+        // original ready bitmap as the preview.
         (function () {
-            // Ben is channel 350 on the hub; his circular shadow is 351.
-            var SHADOW_CHANNEL = 351;
-            var stripStarted = false;
+            var PREVIEW_MEMBERS = [
+                null,
+                "wildmutt_R_ready",
+                "fourarms_R_ready",
+                "heatblast_ready",
+                "xlr8_ready",
+                "ghostfreak_R_ready_1",
+                "ripjaw_R_ready",
+                "stinkfly_ready_1",
+                "graymatter_ready",
+                "diamondhead_R_ready",
+                "upgrade_ready"
+            ];
+            var activePopupID = 0;
+            var repairGeneration = 0;
 
-            function evalLingo(code) {
+            async function evalLingo(expression) {
+                if (typeof window.__ben10EvalLingo === "function") {
+                    return window.__ben10EvalLingo(expression);
+                }
                 var vm = window.__vm;
-                if (!vm || !vm.eval_command) return false;
-                try {
-                    if (vm.__wbindgen_malloc && vm.memory) {
-                        var enc = new TextEncoder().encode(code);
-                        var ptr = vm.__wbindgen_malloc(enc.length, 1);
-                        new Uint8Array(vm.memory.buffer, ptr, enc.length).set(enc);
-                        vm.eval_command(ptr, enc.length);
-                    } else {
-                        vm.eval_command(code);
-                    }
-                    return true;
-                } catch (_) { return false; }
+                if (!vm || typeof vm.mcp_eval_lingo !== "function") return;
+                try { await vm.mcp_eval_lingo(expression); } catch (_) {}
             }
 
-            function strip() {
-                if (!window.__vm || !window.__vm.eval_command) return;
-                evalLingo(
-                    'if sprite(' + SHADOW_CHANNEL + ').width > 0 then ' +
-                    'if sprite(' + SHADOW_CHANNEL + ').height > 0 then ' +
-                    'if sprite(' + SHADOW_CHANNEL + ').member.name = "shadow_round" then ' +
-                    'sprite(' + SHADOW_CHANNEL + ').visible = 0'
+            async function repairPopup(id, generation) {
+                var preview = PREVIEW_MEMBERS[id];
+                if (!preview || generation !== repairGeneration) return;
+
+                await evalLingo("game.popup.screenOverlay.visSprite.visible = 0");
+                if (generation !== repairGeneration) return;
+                await evalLingo("game.popup.bgOverlay.visSprite.visible = 1");
+                await evalLingo("game.popup.animOverlay.visSprite.visible = 1");
+                await evalLingo("game.popup.startButton.visSprite.visible = 1");
+                await evalLingo("game.popup.cancelButton.visSprite.visible = 1");
+                await evalLingo("game.popup.buttonBracket.visSprite.visible = 1");
+                await evalLingo(
+                    'game.popup.animOverlay.visSprite.member = member("' +
+                    preview + '")'
                 );
             }
 
-            // Expose for debugging: window.__strip_spotlight() in DevTools.
-            window.__strip_spotlight = strip;
+            function scheduleRepair(id) {
+                var generation = ++repairGeneration;
+                repairPopup(id, generation);
+                setTimeout(function () { repairPopup(id, generation); }, 200);
+                setTimeout(function () { repairPopup(id, generation); }, 600);
+            }
 
-            function start() {
-                if (stripStarted) return;
-                if (!window.__vm || !window.__vm.eval_command) {
-                    setTimeout(start, 200);
-                    return;
+            function pollPopup() {
+                var vm = window.__vm;
+                if (!vm || typeof vm.get_popup_char_id !== "function") return;
+
+                var id = 0;
+                try { id = vm.get_popup_char_id(); } catch (_) {}
+                if (id > 0 && id < PREVIEW_MEMBERS.length) {
+                    if (id !== activePopupID) {
+                        activePopupID = id;
+                        scheduleRepair(id);
+                    }
+                } else if (activePopupID !== 0) {
+                    activePopupID = 0;
+                    repairGeneration++;
                 }
-                stripStarted = true;
-                strip();
-                setInterval(strip, 500);
             }
 
-            function scheduleStart() {
-                window.removeEventListener("pointerdown", scheduleStart, true);
-                window.removeEventListener("keydown", scheduleStart, true);
-                setTimeout(start, 10000);
-            }
-
-            window.addEventListener("pointerdown", scheduleStart, true);
-            window.addEventListener("keydown", scheduleStart, true);
+            window.__repair_mission_popup = function () {
+                if (activePopupID > 0) scheduleRepair(activePopupID);
+            };
+            setInterval(pollPopup, 120);
         })();
     </script>
 </body>

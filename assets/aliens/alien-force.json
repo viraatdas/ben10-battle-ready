@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "aliens": [
+    {
+      "id": "big-chill",
+      "name": "Big Chill",
+      "carrier": "#CHAR_GHOSTFREAK",
+      "carrierId": 5,
+      "sprite": "assets/aliens/big-chill.png",
+      "sheetWidth": 1717,
+      "sheetHeight": 916,
+      "color": "#78ddff",
+      "targetHeight": 92,
+      "hover": 3,
+      "frames": {
+        "idle": { "x": 102, "y": 138, "width": 297, "height": 641 },
+        "walk": { "x": 578, "y": 161, "width": 377, "height": 606 },
+        "attack": { "x": 1068, "y": 182, "width": 587, "height": 602 }
+      },
+      "attack": {
+        "type": "freeze",
+        "cooldownMs": 1600,
+        "durationMs": 560
+      }
+    },
+    {
+      "id": "humungousaur",
+      "name": "Humungousaur",
+      "carrier": "#CHAR_FOURARMS",
+      "carrierId": 2,
+      "sprite": "assets/aliens/humungousaur.png",
+      "sheetWidth": 2172,
+      "sheetHeight": 724,
+      "color": "#d79a47",
+      "targetHeight": 128,
+      "hover": 0,
+      "frames": {
+        "idle": { "x": 131, "y": 84, "width": 402, "height": 534 },
+        "walk": { "x": 761, "y": 81, "width": 597, "height": 534 },
+        "attack": { "x": 1423, "y": 251, "width": 673, "height": 401 }
+      },
+      "attack": {
+        "type": "slam",
+        "cooldownMs": 1050,
+        "durationMs": 620
+      }
+    },
+    {
+      "id": "echo-echo",
+      "name": "Echo Echo",
+      "carrier": "#CHAR_GRAYMATTER",
+      "carrierId": 8,
+      "sprite": "assets/aliens/echo-echo.png",
+      "sheetWidth": 1870,
+      "sheetHeight": 841,
+      "color": "#b8ff79",
+      "targetHeight": 62,
+      "hover": 0,
+      "frames": {
+        "idle": { "x": 144, "y": 101, "width": 305, "height": 613 },
+        "walk": { "x": 676, "y": 108, "width": 331, "height": 599 },
+        "attack": { "x": 1156, "y": 134, "width": 629, "height": 580 }
+      },
+      "attack": {
+        "type": "sonic",
+        "cooldownMs": 720,
+        "durationMs": 480
+      }
+    }
+  ]
+}

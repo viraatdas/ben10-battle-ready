@@ -19,8 +19,9 @@ body {
 
 #game-container {
     position: relative;
-    width: 780px;
-    height: 480px;
+    width: min(780px, 100vw, 162.5vh);
+    height: auto;
+    aspect-ratio: 13 / 8;
     border: 3px solid #00d100;
     border-radius: 4px;
     box-shadow: 0 0 30px rgba(0, 209, 0, 0.3);
@@ -36,8 +37,6 @@ body {
 
 @media (max-width: 800px) {
     #game-container {
-        width: 100vw;
-        height: calc(100vw * 480 / 780);
         border: none;
         border-radius: 0;
     }
