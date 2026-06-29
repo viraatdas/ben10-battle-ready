@@ -199,8 +199,11 @@
         if (!definition || actual == null) return false;
         var normalized = normalizeToken(actual);
         var carrier = normalizeToken(definition.carrier);
+        var carrierId = String(definition.carrierId || "");
         if (!normalized || !carrier) return false;
-        return normalized.indexOf(carrier) !== -1 || carrier.indexOf(normalized) !== -1;
+        return normalized === carrierId ||
+            normalized.indexOf(carrier) !== -1 ||
+            carrier.indexOf(normalized) !== -1;
     }
 
     function isBen(actual) {
@@ -213,9 +216,10 @@
         return evalLingo("string(game.player.getCharID())");
     }
 
-    async function setNativeSpriteVisible(visible) {
+    async function setNativeSpriteVisible(visible, confirm) {
         var expected = visible ? 1 : 0;
         await evalLingo("game.player.visSprite.visible = " + expected);
+        if (confirm === false) return true;
         var actual = Number(await evalLingo("game.player.visSprite.visible"));
         return Number.isFinite(actual) && actual === expected;
     }
@@ -286,6 +290,7 @@
         var shouldThaw = Boolean(state.activeAlien || state.thaws.length);
         var generation = ++state.generation;
         state.nativeWatchOpen = false;
+        state.transitioning = true;
         state.pendingAlien = definition;
         state.activeAlien = null;
         state.activeNativeForm = null;
@@ -293,7 +298,6 @@
         state.attackCooldownUntil = 0;
         closeSelector();
         updateUi();
-        triggerNativeWatchActivation();
         state.nativeWatchOpen = false;
         playTransformSound();
 
@@ -311,6 +315,7 @@
         if (generation !== state.generation || state.stopped) return;
         if (!rendererReady) {
             state.pendingAlien = null;
+            state.transitioning = false;
             if (state.renderer) state.renderer.clear();
             await setNativeSpriteVisible(true);
             if (generation !== state.generation || state.stopped) return;
@@ -341,18 +346,9 @@
         // and Echo Echo becomes Gray Matter during the transition.
         await delay(34);
         if (generation !== state.generation || state.stopped) return;
-        var nativeHidden = await setNativeSpriteVisible(false);
+        await setNativeSpriteVisible(false, false);
         state.lastNativeHideAt = Date.now();
         if (generation !== state.generation || state.stopped) return;
-        if (!nativeHidden) {
-            state.pendingAlien = null;
-            if (state.renderer) state.renderer.clear();
-            await setNativeSpriteVisible(true);
-            if (generation !== state.generation || state.stopped) return;
-            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
-            updateUi();
-            return false;
-        }
 
         await evalLingo("game.transformPlayerToID = " + definition.carrier);
         if (generation !== state.generation || state.stopped) return;
@@ -362,6 +358,7 @@
         if (generation !== state.generation || state.stopped) return;
         if (!transformed) {
             state.pendingAlien = null;
+            state.transitioning = false;
             await setNativeSpriteVisible(true);
             if (state.renderer) state.renderer.clear();
             if (generation !== state.generation || state.stopped) return;
@@ -376,9 +373,9 @@
         if (generation !== state.generation || state.stopped) return;
         var currentCharacter = await readCharId();
         if (generation !== state.generation || state.stopped) return;
-        if (!directorGameplayOpen() || nativePopupOpen() ||
-                !carrierMatches(currentCharacter, definition)) {
+        if (!directorGameplayOpen() || !carrierMatches(currentCharacter, definition)) {
             state.pendingAlien = null;
+            state.transitioning = false;
             if (state.renderer) state.renderer.clear();
             await setNativeSpriteVisible(true);
             if (generation !== state.generation || state.stopped) return;
@@ -387,7 +384,7 @@
             return false;
         }
 
-        await setNativeSpriteVisible(false);
+        await setNativeSpriteVisible(false, false);
         state.lastNativeHideAt = Date.now();
         if (generation !== state.generation || state.stopped) return;
         if (state.renderer && state.lastPose) {
@@ -405,6 +402,7 @@
 
         state.activeAlien = definition;
         state.pendingAlien = null;
+        state.transitioning = false;
         state.missedSnapshots = 0;
         updateUi();
         return true;
@@ -504,7 +502,6 @@
         state.attackCooldownUntil = 0;
         closeSelector();
         updateUi();
-        triggerNativeWatchActivation();
         state.nativeWatchOpen = false;
         playTransformSound();
 
@@ -838,7 +835,7 @@
                 await deactivateCustomForm("");
             } else if (state.activeAlien && state.renderer) {
                 if (Date.now() - state.lastNativeHideAt > 250) {
-                    await setNativeSpriteVisible(false);
+                    await setNativeSpriteVisible(false, false);
                     state.lastNativeHideAt = Date.now();
                     if (state.stopped) return;
                     if (!state.activeAlien) {
@@ -918,7 +915,7 @@
         await delay(34);
         if (state.stopped || generation !== state.generation ||
                 renderer !== state.renderer || state.activeAlien !== definition) return;
-        await setNativeSpriteVisible(false);
+        await setNativeSpriteVisible(false, false);
     }
 
     function buildUi() {
@@ -1079,7 +1076,8 @@
             if (event.repeat) return;
 
             var nativeCurrent = state.activeNativeForm || nativeFormForChar(state.lastCharId);
-            if (state.activeAlien || state.pendingAlien || nativeCurrent) {
+            if (state.pendingAlien || state.transitioning) return;
+            if (state.activeAlien || nativeCurrent) {
                 revertToBen();
                 return;
             }
