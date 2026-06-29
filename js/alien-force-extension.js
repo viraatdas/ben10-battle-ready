@@ -293,7 +293,6 @@
         state.attackCooldownUntil = 0;
         closeSelector();
         updateUi();
-        showToast("TRANSFORMING INTO " + definition.name.toUpperCase() + "…", definition.color);
         triggerNativeWatchActivation();
         state.nativeWatchOpen = false;
         playTransformSound();
@@ -407,7 +406,6 @@
         state.activeAlien = definition;
         state.pendingAlien = null;
         state.missedSnapshots = 0;
-        showToast(definition.name.toUpperCase() + " READY", definition.color);
         updateUi();
         return true;
     }
@@ -483,7 +481,6 @@
             await evalLingo("game.transformPlayerToID = #CHAR_BEN");
             state.activeNativeForm = null;
             state.transitioning = false;
-            showToast("BEN READY", "#aaff86");
             updateUi();
         }
     }
@@ -507,7 +504,6 @@
         state.attackCooldownUntil = 0;
         closeSelector();
         updateUi();
-        showToast("TRANSFORMING INTO " + form.name.toUpperCase() + "…", form.color);
         triggerNativeWatchActivation();
         state.nativeWatchOpen = false;
         playTransformSound();
@@ -536,7 +532,6 @@
 
         state.transitioning = false;
         state.activeNativeForm = form;
-        showToast(form.name.toUpperCase() + " READY", form.color);
         updateUi();
         return transformed;
     }
@@ -1042,7 +1037,7 @@
 
     function updateUi() {
         if (!state.ui) return;
-        state.ui.selector.hidden = !state.selectorOpen;
+        state.ui.selector.hidden = true;
         if (!state.ui.slots || !state.roster.length) return;
 
         var length = state.roster.length;
