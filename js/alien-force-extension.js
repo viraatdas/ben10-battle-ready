@@ -167,27 +167,17 @@
         return null;
     }
 
-    function customById(id) {
-        return state.definitions.find(function (definition) {
-            return definition.id === id;
-        }) || null;
-    }
-
     function buildRoster(definitions) {
-        var bigChill = customById("big-chill");
-        var humungousaur = customById("humungousaur");
-        var echoEcho = customById("echo-echo");
         var roster = [];
 
+        // Every custom form slots in right after its native carrier.
         NATIVE_FORMS.forEach(function (form) {
             roster.push(Object.assign({ custom: false }, form));
-            if (form.id === "four-arms" && humungousaur) {
-                roster.push(Object.assign({ custom: true }, humungousaur));
-            } else if (form.id === "ghostfreak" && bigChill) {
-                roster.push(Object.assign({ custom: true }, bigChill));
-            } else if (form.id === "gray-matter" && echoEcho) {
-                roster.push(Object.assign({ custom: true }, echoEcho));
-            }
+            definitions.forEach(function (definition) {
+                if (Number(definition.carrierId) === form.charId) {
+                    roster.push(Object.assign({ custom: true }, definition));
+                }
+            });
         });
 
         return roster.length ? roster : definitions.map(function (definition) {
@@ -240,6 +230,61 @@
         }
     }
 
+    // Delays for the game's staged transform animation: arm raise, crouch,
+    // green flash, then the target reveal. Mirrors the timings DirPlayer's
+    // own keyboard handler uses for the native X flow.
+    var MORPH_STEP_DELAYS = [350, 550, 750, 950, 1150, 1400];
+
+    function commitNativeWatch(nativeId) {
+        state.nativeWatchOpen = false;
+        var vm = global.__vm;
+        if (!vm || typeof vm.force_omnitrix_deactivate !== "function") return false;
+        try {
+            vm.force_omnitrix_deactivate(nativeId);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function cancelNativeWatch() {
+        if (!state.nativeWatchOpen) return;
+        state.nativeWatchOpen = false;
+        // Ends the rotation without transforming. force_omnitrix_deactivate
+        // is not reliable for a no-selection cancel, so drive the same Lingo
+        // it wraps directly. Leaving the watch activated would keep the
+        // fullscreen green rotation overlay running forever.
+        evalLingo("game.HUD.omnitrix.setSelection(0)");
+        evalLingo("game.HUD.omnitrix.deactivate()");
+        evalLingo("game.transformKey = 0");
+    }
+
+    function scheduleMorphSteps(nativeId, stepCount, generation) {
+        var vm = global.__vm;
+        if (!vm || typeof vm.force_omnitrix_morph !== "function") return;
+        MORPH_STEP_DELAYS.slice(0, stepCount).forEach(function (delayMs, index) {
+            setTimer(function () {
+                if (state.stopped || generation !== state.generation) return;
+                try { vm.force_omnitrix_morph(nativeId, index + 1); } catch (_) {}
+            }, delayMs);
+        });
+    }
+
+    // Ends the rotation flash, plays stepCount stages of the native morph
+    // animation on Ben, then issues the authoritative character swap at the
+    // green-flash peak. The animation stages are cosmetic; only
+    // game.transformPlayerToID changes the logical character.
+    async function runNativeMorph(nativeId, symbol, stepCount, generation) {
+        await evalLingo("game.HUD.omnitrix.setSelection(" + nativeId + ")");
+        if (generation !== state.generation || state.stopped) return false;
+        commitNativeWatch(nativeId);
+        scheduleMorphSteps(nativeId, stepCount, generation);
+        await delay(950);
+        if (generation !== state.generation || state.stopped) return false;
+        await evalLingo("game.transformPlayerToID = " + symbol);
+        return generation === state.generation && !state.stopped;
+    }
+
     async function retryNativeRestore(generation) {
         if (state.stopped || generation !== state.generation) return;
         var restored = await setNativeSpriteVisible(true);
@@ -283,28 +328,9 @@
         if (!definition || !state.ready || !state.lastPose ||
                 state.transitioning || state.pendingAlien || state.stopped ||
                 !directorGameplayOpen() || (!ownWatchPopup && nativePopupOpen())) {
-            if (ownWatchPopup) state.nativeWatchOpen = false;
+            if (ownWatchPopup) cancelNativeWatch();
             return false;
         }
-
-        var shouldThaw = Boolean(state.activeAlien || state.thaws.length);
-        var generation = ++state.generation;
-        state.nativeWatchOpen = false;
-        state.transitioning = true;
-        state.pendingAlien = definition;
-        state.activeAlien = null;
-        state.activeNativeForm = null;
-        state.attackUntil = 0;
-        state.attackCooldownUntil = 0;
-        closeSelector();
-        updateUi();
-        state.nativeWatchOpen = false;
-        playTransformSound();
-
-        if (shouldThaw) await thawEnemies();
-        if (generation !== state.generation || state.stopped) return;
-        await setNativeSpriteVisible(true);
-        if (generation !== state.generation || state.stopped) return;
 
         ensureRenderer();
         var rendererReady = Boolean(
@@ -312,81 +338,55 @@
             typeof state.renderer.readyFor === "function" &&
             await state.renderer.readyFor(definition.id)
         );
-        if (generation !== state.generation || state.stopped) return;
+        if (state.stopped || state.transitioning || state.pendingAlien) {
+            cancelNativeWatch();
+            return false;
+        }
         if (!rendererReady) {
-            state.pendingAlien = null;
-            state.transitioning = false;
-            if (state.renderer) state.renderer.clear();
-            await setNativeSpriteVisible(true);
-            if (generation !== state.generation || state.stopped) return;
-            showToast("SPRITE UNAVAILABLE", "#ff765f");
-            updateUi();
+            // The replacement sheet is unavailable; transform into the native
+            // carrier instead, with the full animation, so the Omnitrix
+            // always works.
+            var carrierForm = NATIVE_FORMS.find(function (form) {
+                return form.charId === Number(definition.carrierId);
+            });
+            showToast("SPRITE UNAVAILABLE", "#ffdf66");
+            if (carrierForm) return transformNative(carrierForm);
+            cancelNativeWatch();
             return false;
         }
 
-        if (state.renderer) {
-            state.renderer.clear();
-            if (state.lastPose) {
-                state.renderer.updatePose({
-                    x: state.lastPose.x,
-                    y: state.lastPose.y,
-                    flipH: state.lastPose.flipH,
-                    blend: state.lastPose.blend,
-                    moving: false,
-                    attacking: false,
-                    alienId: definition.id,
-                    phase: state.lastPose.blend < 0.85 ? 1 : 0
-                });
-                state.renderer.playEffect("transform", state.lastPose, state.lastPose.flipH ? -1 : 1);
-            }
-        }
+        var shouldThaw = Boolean(state.activeAlien || state.thaws.length);
+        var generation = ++state.generation;
+        state.transitioning = true;
+        state.pendingAlien = definition;
+        state.activeAlien = null;
+        state.activeNativeForm = null;
+        state.attackUntil = 0;
+        state.attackCooldownUntil = 0;
+        closeSelector(true);
+        updateUi();
+        playTransformSound();
 
-        // Hide the native carrier before the Director morph starts. Otherwise
-        // Big Chill visibly becomes Ghostfreak, Humungousaur becomes Four Arms,
-        // and Echo Echo becomes Gray Matter during the transition.
-        await delay(34);
+        if (shouldThaw) await thawEnemies();
         if (generation !== state.generation || state.stopped) return;
-        await setNativeSpriteVisible(false, false);
-        state.lastNativeHideAt = Date.now();
+        // Ben stays visible so his native crouch/flash transform animation
+        // plays. Only Ben-side morph stages run (3): the carrier reveal
+        // stages are skipped so Big Chill never visibly becomes Ghostfreak,
+        // nor Humungousaur Four Arms, nor Echo Echo Gray Matter.
+        await setNativeSpriteVisible(true);
+        if (generation !== state.generation || state.stopped) return;
+        if (state.renderer) state.renderer.clear();
+
+        await evalLingo("game.HUD.omnitrix.setSelection(" + Number(definition.carrierId) + ")");
+        if (generation !== state.generation || state.stopped) return;
+        commitNativeWatch(Number(definition.carrierId));
+        scheduleMorphSteps(Number(definition.carrierId), 3, generation);
+        await delay(950);
         if (generation !== state.generation || state.stopped) return;
 
-        await evalLingo("game.transformPlayerToID = " + definition.carrier);
-        if (generation !== state.generation || state.stopped) return;
-        var transformed = await waitForCarrier(definition, generation, 1700);
-        if (!transformed) transformed = await fallbackMorph(definition, generation);
-
-        if (generation !== state.generation || state.stopped) return;
-        if (!transformed) {
-            state.pendingAlien = null;
-            state.transitioning = false;
-            await setNativeSpriteVisible(true);
-            if (state.renderer) state.renderer.clear();
-            if (generation !== state.generation || state.stopped) return;
-            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
-            updateUi();
-            return false;
-        }
-
-        // Let the native state settle while the replacement sprite stays visible.
-        // Physics, damage, camera and mission state stay native.
-        await delay(1350);
-        if (generation !== state.generation || state.stopped) return;
-        var currentCharacter = await readCharId();
-        if (generation !== state.generation || state.stopped) return;
-        if (!directorGameplayOpen() || !carrierMatches(currentCharacter, definition)) {
-            state.pendingAlien = null;
-            state.transitioning = false;
-            if (state.renderer) state.renderer.clear();
-            await setNativeSpriteVisible(true);
-            if (generation !== state.generation || state.stopped) return;
-            showToast("TRANSFORMATION INTERRUPTED", "#ff765f");
-            updateUi();
-            return false;
-        }
-
-        await setNativeSpriteVisible(false, false);
-        state.lastNativeHideAt = Date.now();
-        if (generation !== state.generation || state.stopped) return;
+        // Swap in the replacement sprite at the flash peak and run the
+        // Director morph behind it. Physics, damage, camera and mission
+        // state stay native.
         if (state.renderer && state.lastPose) {
             state.renderer.updatePose({
                 x: state.lastPose.x,
@@ -398,6 +398,27 @@
                 alienId: definition.id,
                 phase: state.lastPose.blend < 0.85 ? 1 : 0
             });
+            state.renderer.playEffect("transform", state.lastPose, state.lastPose.flipH ? -1 : 1);
+        }
+        await setNativeSpriteVisible(false, false);
+        state.lastNativeHideAt = Date.now();
+        if (generation !== state.generation || state.stopped) return;
+
+        await evalLingo("game.transformPlayerToID = " + definition.carrier);
+        if (generation !== state.generation || state.stopped) return;
+        var transformed = await waitForCarrier(definition, generation, 1700);
+        if (!transformed) transformed = await fallbackMorph(definition, generation);
+
+        if (generation !== state.generation || state.stopped) return;
+        if (!transformed || !directorGameplayOpen()) {
+            state.pendingAlien = null;
+            state.transitioning = false;
+            if (state.renderer) state.renderer.clear();
+            await setNativeSpriteVisible(true);
+            if (generation !== state.generation || state.stopped) return;
+            showToast("TRANSFORMATION UNAVAILABLE", "#ff765f");
+            updateUi();
+            return false;
         }
 
         state.activeAlien = definition;
@@ -488,36 +509,30 @@
         if (!form || !state.ready || !state.lastPose ||
                 state.transitioning || state.pendingAlien || state.stopped ||
                 !directorGameplayOpen() || (!ownWatchPopup && nativePopupOpen())) {
-            if (ownWatchPopup) state.nativeWatchOpen = false;
+            if (ownWatchPopup) cancelNativeWatch();
             return false;
         }
 
         var generation = ++state.generation;
-        state.nativeWatchOpen = false;
         state.transitioning = true;
         state.activeAlien = null;
         state.activeNativeForm = null;
         state.pendingAlien = null;
         state.attackUntil = 0;
         state.attackCooldownUntil = 0;
-        closeSelector();
+        closeSelector(true);
         updateUi();
-        state.nativeWatchOpen = false;
         playTransformSound();
 
         await thawEnemies();
         if (generation !== state.generation || state.stopped) return false;
         await setNativeSpriteVisible(true);
         if (generation !== state.generation || state.stopped) return false;
-        if (state.renderer) {
-            state.renderer.clear();
-            if (state.lastPose) {
-                state.renderer.playEffect("transform", state.lastPose, state.lastPose.flipH ? -1 : 1);
-            }
-        }
+        if (state.renderer) state.renderer.clear();
 
-        await evalLingo("game.transformPlayerToID = " + form.symbol);
-        var transformed = await waitForNativeForm(form, generation, 1200);
+        var issued = await runNativeMorph(form.charId, form.symbol, 6, generation);
+        if (!issued) return false;
+        var transformed = await waitForNativeForm(form, generation, 1700);
         if (generation !== state.generation || state.stopped) return false;
 
         if (!transformed) {
@@ -1014,7 +1029,7 @@
 
     function closeSelector(keepNativeWatch) {
         state.selectorOpen = false;
-        if (!keepNativeWatch) state.nativeWatchOpen = false;
+        if (!keepNativeWatch) cancelNativeWatch();
         clearRotationTimer();
         updateUi();
         focusStage();
@@ -1034,7 +1049,8 @@
 
     function updateUi() {
         if (!state.ui) return;
-        state.ui.selector.hidden = true;
+        var open = state.selectorOpen && state.roster.length > 0;
+        state.ui.selector.hidden = !open;
         if (!state.ui.slots || !state.roster.length) return;
 
         var length = state.roster.length;
@@ -1128,7 +1144,7 @@
         var response = await fetch(CONFIG_URL, { credentials: "same-origin" });
         if (!response.ok) throw new Error("Alien configuration failed to load");
         var data = await response.json();
-        if (!data || !Array.isArray(data.aliens) || data.aliens.length !== 3) {
+        if (!data || !Array.isArray(data.aliens) || !data.aliens.length) {
             throw new Error("Alien configuration is invalid");
         }
         return data.aliens;
@@ -1160,6 +1176,7 @@
         state.activeNativeForm = null;
         state.pendingAlien = null;
         state.selectorOpen = false;
+        cancelNativeWatch();
         clearRotationTimer();
         clearTimers();
         global.removeEventListener("keydown", onKeyDown, true);

@@ -129,10 +129,14 @@ The three additional forms are inserted near their native carriers:
 
 The extension reads the native player's position, facing, blend, action, and
 game-frame clock through DirPlayer's serialized MCP bridge. Native collision,
-camera, health, damage, mission, and pause logic remain authoritative. Custom
-form sprites are drawn before their carrier morph begins, so Big Chill no
-longer visibly becomes Ghostfreak during the transition. If an asset or the
-extension fails to load, the Director game continues normally.
+camera, health, damage, mission, and pause logic remain authoritative.
+Transformations run the game's own Omnitrix sequence — activation flash, Ben's
+crouch-and-flash morph animation, then the character swap. For the three
+custom forms the replacement sprite swaps in at the green-flash peak, so Big
+Chill never visibly becomes Ghostfreak during the transition. If a custom
+sprite sheet fails to load, the Omnitrix still transforms — into the native
+carrier form, with the full animation. If the extension itself fails to load,
+the Director game continues normally.
 
 The designs and power behavior were checked against Dwayne McDuffie's
 [Alien Force series bible](https://dwaynemcduffie.com/wp-content/uploads/2024/07/WEBSITE-B10Hero-Generation-SERIES-BIBLE-by-Dwayne.pdf).

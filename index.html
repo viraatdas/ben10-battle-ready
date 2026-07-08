@@ -150,6 +150,34 @@
             };
             setInterval(pollPopup, 120);
         })();
+
+        // The scene keeps a 200x200 "shadow_round" spotlight sprite in the
+        // channel right above the player, which reads as a big dark circle
+        // around Ben. It is drawn by the original Director scene, so it has
+        // to be hidden through Lingo rather than CSS. Levels reload sprites,
+        // so the strip re-runs periodically.
+        (function () {
+            var stripBusy = false;
+
+            async function strip() {
+                var evalLingo = window.__ben10EvalLingo;
+                if (typeof evalLingo !== "function") return;
+
+                var channel = Number(await evalLingo("game.player.visSprite.spriteNum"));
+                if (!Number.isFinite(channel) || channel <= 0) return;
+
+                var shadow = channel + 1;
+                var name = await evalLingo("string(sprite(" + shadow + ").member.name)");
+                if (name !== "shadow_round") return;
+                await evalLingo("sprite(" + shadow + ").visible = 0");
+            }
+
+            setInterval(function () {
+                if (stripBusy) return;
+                stripBusy = true;
+                strip().catch(function () {}).finally(function () { stripBusy = false; });
+            }, 600);
+        })();
     </script>
 </body>
 </html>
